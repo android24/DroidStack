@@ -19,8 +19,8 @@ export default defineConfig({
     // https://vitepress.dev/reference/default-theme-config
     logo: '/datawhale-logo.png',
     nav: [
+      { text: '开始学习', link: '/chapter1/' },
       { text: 'GitHub', link: 'https://github.com/android24/DroidStack' },
-      { text: 'PDF版本下载', link: 'https://github.com/android24/DroidStack/releases' },
     ],
     search: {
       provider: 'local',
@@ -43,15 +43,53 @@ export default defineConfig({
     },
     sidebar: [
       {
+        text: '第一阶段：认识 Android 开源框架',
         items: [
           { text: '第1章：Android 开源框架全景', link: '/chapter1/' },
           {
             text: '第2章：如何学习和评价一个开源框架',
+            link: '/chapter2/',
             items: [
               { text: '第2.1节：如何学习一个开源框架', link: '/chapter2/chapter2_1' },
               { text: '第2.2节：框架评价与选型维度', link: '/chapter2/chapter2_2' }
             ]
           }
+        ]
+      },
+      {
+        text: '第二阶段：数据获取与处理框架',
+        items: [
+          { text: '第3章：图片加载框架（建设中）' },
+          { text: '第4章：网络请求底层框架（建设中）' },
+          { text: '第5章：接口代理与网络处理框架（建设中）' },
+          { text: '第6章：JSON 序列化与数据转换（建设中）' }
+        ]
+      },
+      {
+        text: '第三阶段：线程、数据流与依赖管理',
+        items: [
+          { text: '第7章：Android 异步编程发展史（建设中）' },
+          { text: '第8章：RxJava 与响应式编程（建设中）' },
+          { text: '第9章：Kotlin Coroutines 与 Flow（建设中）' },
+          { text: '第10章：依赖注入框架（建设中）' }
+        ]
+      },
+      {
+        text: '第四阶段：本地数据、后台任务与架构',
+        items: [
+          { text: '第11章：本地数据存储框架（建设中）' },
+          { text: '第12章：后台任务与任务调度（建设中）' },
+          { text: '第13章：分页、缓存与离线优先架构（建设中）' },
+          { text: '第14章：Android 架构框架与状态管理（建设中）' },
+          { text: '第15章：导航、组件通信与生命周期（建设中）' }
+        ]
+      },
+      {
+        text: '第五阶段：工程质量与综合实践',
+        items: [
+          { text: '第16章：Android 测试框架（建设中）' },
+          { text: '第17章：调试、日志与性能框架（建设中）' },
+          { text: '第18章：综合项目与框架选型（建设中）' }
         ]
       }
     ],
@@ -65,7 +103,7 @@ export default defineConfig({
     },
 
     footer: {
-      message: '<a href="https://beian.miit.gov.cn/" target="_blank">京ICP备2026002630号-1</a> | <a href="https://beian.mps.gov.cn/#/query/webSearch?code=11010602202215" rel="noreferrer" target="_blank">京公网安备11010602202215号</a>',
+      message: '<a href="https://github.com/android24/DroidStack" target="_blank">DroidStack on GitHub</a>',
       copyright: '本作品采用 <a href="http://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank">知识共享署名-非商业性使用-相同方式共享 4.0 国际许可协议（CC BY-NC-SA 4.0）</a> 进行许可'
     }
   }
