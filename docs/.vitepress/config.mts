@@ -3,14 +3,14 @@ import { defineConfig } from 'vitepress'
 
 // 1. 获取环境变量并判断
 // 如果环境变量 EDGEONE 等于 '1'，说明在 EdgeOne 环境，使用根路径 '/'
-// 否则默认是 GitHub Pages 环境，使用仓库子路径 '/easy-vecdb/'
+// 否则默认是 GitHub Pages 环境，使用仓库子路径 '/DroidStack/'
 const isEdgeOne = process.env.EDGEONE === '1'
-const baseConfig = isEdgeOne ? '/' : '/repo-template/'
+const baseConfig = isEdgeOne ? '/' : '/DroidStack/'
 
 export default defineConfig({
   lang: 'zh-CN',
-  title: "Datawhale开源教程",
-  description: "AI前沿知识开源教程",
+  title: 'DroidStack',
+  description: 'Android 开源框架全景：原理、选型与工程实践',
   base: baseConfig,
   markdown: {
     math: true
@@ -19,7 +19,8 @@ export default defineConfig({
     // https://vitepress.dev/reference/default-theme-config
     logo: '/datawhale-logo.png',
     nav: [
-      { text: 'PDF版本下载', link: 'https://github.com/datawhalechina/repo-template/releases' },
+      { text: 'GitHub', link: 'https://github.com/android24/DroidStack' },
+      { text: 'PDF版本下载', link: 'https://github.com/android24/DroidStack/releases' },
     ],
     search: {
       provider: 'local',
@@ -43,23 +44,24 @@ export default defineConfig({
     sidebar: [
       {
         items: [
-          { text: '第1章：第1章的标题', link: '/chapter1/' },
-          { text: '第2章：第2章的标题', 
+          { text: '第1章：Android 开源框架全景', link: '/chapter1/' },
+          {
+            text: '第2章：如何学习和评价一个开源框架',
             items: [
-              { text: '第2.1节：第2.1节的标题', link: '/chapter2/chapter2_1' },
-              { text: '第2.2节：第2.2节的标题', link: '/chapter2/chapter2_2' }
+              { text: '第2.1节：如何学习一个开源框架', link: '/chapter2/chapter2_1' },
+              { text: '第2.2节：框架评价与选型维度', link: '/chapter2/chapter2_2' }
             ]
-           }
+          }
         ]
       }
     ],
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/datawhalechina/repo-template' }
+      { icon: 'github', link: 'https://github.com/android24/DroidStack' }
     ],
 
     editLink: {
-      pattern: 'https://github.com/datawhalechina/repo-template/blob/main/docs/:path'
+      pattern: 'https://github.com/android24/DroidStack/blob/main/docs/:path'
     },
 
     footer: {
