@@ -59,7 +59,7 @@ export default defineConfig({
       {
         text: '第二阶段：数据获取与处理框架',
         items: [
-          { text: '第3章：图片加载框架（建设中）' },
+          { text: '第3章：图片加载框架', link: '/chapter3/' },
           { text: '第4章：网络请求底层框架（建设中）' },
           { text: '第5章：接口代理与网络处理框架（建设中）' },
           { text: '第6章：JSON 序列化与数据转换（建设中）' }
