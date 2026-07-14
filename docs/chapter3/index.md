@@ -2,609 +2,862 @@
 
 从本章开始，课程进入第二阶段：数据获取与处理框架。
 
-图片加载是 Android 开发中最常见、也最容易被低估的问题之一。表面上看，它只是“把一个 URL 显示到 ImageView 或 Compose 组件上”；但在真实项目中，图片加载会牵涉网络请求、线程调度、Bitmap 解码、内存缓存、磁盘缓存、生命周期、列表复用、请求取消、弱网重试、占位图、错误图、预加载和内存优化。
+这一章不再把图片加载框架讲成一组抽象概念，而是围绕一个真实业务场景展开：**商品列表 + 商品详情页**。
 
-如果没有图片加载框架，一个商品列表、资讯流、头像墙或相册页面很快就会遇到卡顿、错位、OOM、重复请求和生命周期泄漏等问题。
+在这个场景中，首页需要展示大量商品封面，详情页需要展示大图，用户会快速滑动列表、进入详情、返回列表、弱网重试、刷新数据。图片加载框架必须解决的不只是“显示一张图”，还包括缓存、解码、生命周期、列表复用、请求取消、错误状态和工程封装。
 
-本章会围绕图片加载这一问题域，重点回答五个问题：
+本章会重点结合两个真实框架：
 
-1. Android 图片加载为什么不能直接手写；
-2. 一张网络图片从 URL 到屏幕经历了哪些步骤；
-3. 图片加载框架的核心模块通常如何设计；
-4. Coil、Glide、Picasso、Fresco 分别适合什么场景；
-5. 在现代 Android 项目中应该如何选择和封装图片加载框架。
+- **Coil**：现代 Kotlin / Compose 项目中的优先选择；
+- **Glide**：传统 View / RecyclerView 项目中非常成熟的选择。
+
+Picasso、Fresco 和 Universal Image Loader 会作为历史框架和选型对比出现，不再平均用力展开。
 
 ## 3.1 本章学习目标
 
 学习完本章后，你应该能够：
 
-- 说清楚图片加载框架解决的核心问题；
-- 理解图片请求、下载、缓存、解码、变换和显示的完整链路；
-- 区分内存缓存、磁盘缓存和网络缓存的职责；
-- 理解 Bitmap 解码、采样、压缩、复用和内存占用的基本原理；
-- 解释为什么图片加载需要绑定 Activity、Fragment、ViewModel 或 Compose 生命周期；
-- 分析 RecyclerView、LazyColumn 等列表场景下的图片错位、闪烁和重复加载问题；
-- 从工程角度比较 Coil、Glide、Picasso 和 Fresco；
-- 设计一个简化版图片加载框架的核心结构；
-- 在项目中制定图片加载框架的封装和使用规范。
+- 在 Compose 项目中使用 Coil 加载图片；
+- 在传统 View / RecyclerView 项目中使用 Glide 加载图片；
+- 说清楚 `AsyncImage`、`ImageRequest`、`ImageLoader`、`Glide.with()`、`RequestBuilder`、`Target` 等核心 API 的作用；
+- 理解内存缓存、磁盘缓存、网络请求和 Bitmap 解码如何影响图片加载性能；
+- 解释 RecyclerView / LazyColumn 中图片错位、闪烁、重复请求的原因；
+- 根据项目类型在 Coil、Glide、Picasso、Fresco 之间做出合理选择；
+- 设计一个项目级图片加载封装，而不是让业务代码到处散落框架调用；
+- 从实际 API 反推图片加载框架的内部结构和源码阅读主线。
 
-## 3.2 为什么不能直接手写图片加载
+## 3.2 业务场景：商品列表与详情页
 
-最简单的图片加载思路可能是：
+先定义一个贯穿本章的业务模型：
 
-```text
-拿到图片 URL
-  -> 开线程下载图片
-  -> 把图片解码成 Bitmap
-  -> 切回主线程显示到 ImageView
+```kotlin
+data class Product(
+    val id: String,
+    val name: String,
+    val coverUrl: String,
+    val detailImageUrl: String,
+    val updatedAt: Long
+)
 ```
 
-这个思路能跑通 Demo，但很难支撑真实业务。
+商品列表页有几个典型要求：
 
-真实项目中至少会遇到这些问题：
+- 列表首屏图片要尽快出现；
+- 快速滑动时不能卡顿；
+- item 复用时不能显示错图；
+- 图片未加载完成前要有占位图；
+- 图片失败时要有错误图或重试入口；
+- 返回列表时最好命中缓存；
+- 商品封面更新后不能继续显示旧图。
 
-| 问题 | 说明 |
+商品详情页还有额外要求：
+
+- 大图不能直接按原图尺寸解码；
+- 需要根据屏幕宽度裁剪或缩放；
+- 可能需要加载缩略图后再加载高清图；
+- 失败要能够重试；
+- 页面退出后请求要取消。
+
+如果自己手写，业务代码很快会变成这样：
+
+```text
+下载图片
+  -> 切线程
+  -> 解析 Bitmap 尺寸
+  -> 采样解码
+  -> 做内存缓存
+  -> 做磁盘缓存
+  -> 切回主线程
+  -> 判断 View 是否被复用
+  -> 判断页面是否销毁
+  -> 设置 ImageView 或 Compose State
+```
+
+图片加载框架的意义，就是把这些重复复杂度收敛到稳定 API 和可复用机制中。
+
+## 3.3 Coil：Compose 项目的图片加载主线
+
+Coil 是 Kotlin-first 的图片加载框架，名字来自 Coroutine Image Loader。它和 Compose、协程、OkHttp、Ktor 等现代 Android 技术栈配合自然。
+
+在 Compose 项目中，优先从 Coil 开始讲，因为它能直接体现现代 Android 的状态驱动 UI 思路。
+
+### 3.3.1 依赖接入
+
+在真实项目中，建议把版本放到 Version Catalog 或统一依赖管理文件里。下面只展示依赖形态，具体版本以项目锁定版本和官方文档为准。
+
+```kotlin
+dependencies {
+    implementation("io.coil-kt.coil3:coil-compose:<coil-version>")
+    implementation("io.coil-kt.coil3:coil-network-okhttp:<coil-version>")
+}
+```
+
+需要特别注意：Coil 3.x 默认不强制包含网络加载能力。也就是说，如果要加载 `https://...` 图片，需要额外接入 OkHttp 或 Ktor 网络模块。
+
+### 3.3.2 最小使用：AsyncImage
+
+商品列表中最小的 Compose 图片加载代码可以这样写：
+
+```kotlin
+@Composable
+fun ProductCover(
+    imageUrl: String,
+    modifier: Modifier = Modifier
+) {
+    AsyncImage(
+        model = imageUrl,
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        modifier = modifier
+            .aspectRatio(1f)
+            .clip(RoundedCornerShape(8.dp))
+    )
+}
+```
+
+这段代码背后并不只是“设置图片 URL”。`AsyncImage` 会执行异步图片请求，并根据 Compose 组件约束和 `ContentScale` 尽量加载合适尺寸的图片。
+
+这也是为什么在大多数 Compose 场景中，应该优先使用 `AsyncImage`，而不是一上来就使用更底层的 painter。
+
+### 3.3.3 加入占位图、错误图和请求配置
+
+真实业务不会只写一个 URL。商品封面通常需要占位图、错误图、淡入动画和固定裁剪策略。
+
+```kotlin
+@Composable
+fun ProductCover(
+    product: Product,
+    modifier: Modifier = Modifier
+) {
+    AsyncImage(
+        model = ImageRequest.Builder(LocalContext.current)
+            .data(product.coverUrl)
+            .crossfade(true)
+            .memoryCacheKey("product_cover_${product.id}_${product.updatedAt}")
+            .diskCacheKey("product_cover_${product.id}_${product.updatedAt}")
+            .build(),
+        placeholder = painterResource(R.drawable.ic_product_placeholder),
+        error = painterResource(R.drawable.ic_product_error),
+        contentDescription = product.name,
+        contentScale = ContentScale.Crop,
+        modifier = modifier
+            .aspectRatio(1f)
+            .clip(RoundedCornerShape(8.dp))
+    )
+}
+```
+
+这里有几个点值得拆开看：
+
+| 代码 | 解决的问题 |
 | --- | --- |
-| 主线程阻塞 | 网络下载和 Bitmap 解码都不能放在主线程，否则会造成卡顿甚至 ANR |
-| 内存占用高 | 原图尺寸可能远大于控件尺寸，直接解码容易浪费内存 |
-| 重复请求 | 列表快速滑动时，同一张图片可能被反复下载和解码 |
-| 图片错位 | RecyclerView 复用 View 时，旧请求返回后可能显示到错误 item 上 |
-| 生命周期泄漏 | 页面销毁后请求仍在执行，可能造成无效回调或内存泄漏 |
-| 请求取消困难 | 用户滑走页面、列表 item 被复用时，需要取消不再需要的请求 |
-| 缓存策略复杂 | 需要同时考虑内存缓存、磁盘缓存、HTTP 缓存和缓存失效 |
-| 弱网体验差 | 需要占位图、错误图、重试、降级和加载状态 |
-| 图片类型多 | JPEG、PNG、WebP、GIF、SVG、视频帧等处理方式不同 |
-| 性能难治理 | 图片加载会直接影响启动、滚动、内存和流量消耗 |
+| `ImageRequest.Builder` | 把一次图片加载从简单 URL 提升为可配置请求 |
+| `data(product.coverUrl)` | 指定图片来源 |
+| `crossfade(true)` | 非内存缓存命中时增加过渡效果 |
+| `memoryCacheKey` / `diskCacheKey` | 把商品更新时间纳入缓存 key，避免图片更新后继续命中旧缓存 |
+| `placeholder` | 网络或解码未完成时保持布局稳定 |
+| `error` | 弱网或 URL 异常时给用户明确反馈 |
+| `contentScale` | 控制图片如何适配容器 |
 
-图片加载框架的价值就在于：把这些重复出现的问题抽象成统一的请求模型、缓存模型、解码模型和生命周期模型。
+这就是从“能显示图片”走向“工程可用”的第一步。
 
-## 3.3 图片加载的完整链路
+### 3.3.4 LazyColumn 中的商品列表
 
-一张网络图片从 URL 到屏幕，通常会经历下面的流程。
+把图片放到列表里时，重点不是多写几行 UI，而是保证 item 尺寸稳定、key 稳定、图片请求稳定。
+
+```kotlin
+@Composable
+fun ProductList(
+    products: List<Product>,
+    onClick: (Product) -> Unit
+) {
+    LazyColumn {
+        items(
+            items = products,
+            key = { it.id }
+        ) { product ->
+            ProductRow(
+                product = product,
+                onClick = { onClick(product) }
+            )
+        }
+    }
+}
+
+@Composable
+fun ProductRow(
+    product: Product,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        ProductCover(
+            product = product,
+            modifier = Modifier.size(72.dp)
+        )
+
+        Spacer(Modifier.width(12.dp))
+
+        Text(
+            text = product.name,
+            style = MaterialTheme.typography.titleMedium
+        )
+    }
+}
+```
+
+这里最重要的不是 `Row`，而是这些工程细节：
+
+- `items(key = { it.id })` 让 Compose 更稳定地识别列表 item；
+- `Modifier.size(72.dp)` 给图片稳定尺寸，减少重新测量和加载原图的机会；
+- `ProductCover` 内部统一配置占位图、错误图、裁剪和缓存 key；
+- 业务层不直接到处拼 Coil 参数，后续替换策略更容易。
+
+### 3.3.5 需要观察加载状态时
+
+如果页面需要根据图片加载状态展示骨架屏、重试按钮或统计埋点，可以使用 `rememberAsyncImagePainter` 观察状态。
+
+```kotlin
+@Composable
+fun ProductCoverWithState(
+    product: Product,
+    modifier: Modifier = Modifier
+) {
+    val painter = rememberAsyncImagePainter(
+        model = ImageRequest.Builder(LocalContext.current)
+            .data(product.coverUrl)
+            .crossfade(true)
+            .build()
+    )
+
+    val state by painter.state.collectAsState()
+
+    Box(modifier = modifier.aspectRatio(1f)) {
+        Image(
+            painter = painter,
+            contentDescription = product.name,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.matchParentSize()
+        )
+
+        when (state) {
+            is AsyncImagePainter.State.Loading -> {
+                CircularProgressIndicator(Modifier.align(Alignment.Center))
+            }
+            is AsyncImagePainter.State.Error -> {
+                Icon(
+                    imageVector = Icons.Default.BrokenImage,
+                    contentDescription = null,
+                    modifier = Modifier.align(Alignment.Center)
+                )
+            }
+            else -> Unit
+        }
+    }
+}
+```
+
+这类写法适合需要明确状态控制的地方。普通列表图片优先使用 `AsyncImage`，因为它更直接，也更容易让框架根据布局约束加载合适尺寸。
+
+### 3.3.6 配置全局 ImageLoader
+
+如果项目需要统一 OkHttp、缓存、日志、鉴权或监控，就不应该在每个 `AsyncImage` 里重复写配置，而应该配置全局 `ImageLoader`。
+
+```kotlin
+class DroidStackApplication : Application(), SingletonImageLoader.Factory {
+
+    override fun newImageLoader(context: Context): ImageLoader {
+        return ImageLoader.Builder(context)
+            .crossfade(true)
+            .memoryCache {
+                MemoryCache.Builder()
+                    .maxSizePercent(context, 0.25)
+                    .build()
+            }
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(context.cacheDir.resolve("image_cache"))
+                    .maxSizePercent(0.02)
+                    .build()
+            }
+            .components {
+                add(
+                    OkHttpNetworkFetcherFactory(
+                        callFactory = {
+                            OkHttpClient.Builder()
+                                .addInterceptor(ImageHeaderInterceptor())
+                                .build()
+                        }
+                    )
+                )
+            }
+            .build()
+    }
+}
+```
+
+这个配置对应了图片加载框架的几个核心部件：
+
+| 配置 | 对应框架能力 |
+| --- | --- |
+| `ImageLoader.Builder` | 创建应用级图片加载器 |
+| `memoryCache` | 配置解码后图片的内存缓存 |
+| `diskCache` | 配置磁盘缓存目录和大小 |
+| `components` | 注册网络、解码、数据获取等组件 |
+| `OkHttpNetworkFetcherFactory` | 使用 OkHttp 获取网络图片 |
+| `Interceptor` | 统一添加 Header、日志或监控 |
+
+对于大型项目，`ImageLoader` 也可以通过 Hilt 注入。这样测试时可以替换成假的图片加载器，截图测试和 UI 测试也更稳定。
+
+## 3.4 Glide：传统 View 项目的图片加载主线
+
+Glide 是 Android 传统 View 项目中非常成熟的图片加载框架。它特别强调列表滚动性能、生命周期绑定、资源复用和多级缓存。
+
+如果项目主要由 XML、Fragment、RecyclerView、ImageView 组成，Glide 依然是非常稳的选择。
+
+### 3.4.1 最小使用
+
+```kotlin
+Glide.with(fragment)
+    .load(product.coverUrl)
+    .into(imageView)
+```
+
+这段代码中最关键的是 `Glide.with(fragment)`。
+
+它不只是为了拿到 `Context`，还会让请求跟随 `Fragment` 生命周期。当 Fragment 销毁时，Glide 可以自动清理相关请求和资源，避免页面消失后仍然回调旧 View。
+
+### 3.4.2 常用请求配置
+
+真实商品封面通常会加上占位图、错误图、裁剪、缓存策略和版本签名。
+
+```kotlin
+Glide.with(fragment)
+    .load(product.coverUrl)
+    .placeholder(R.drawable.ic_product_placeholder)
+    .error(R.drawable.ic_product_error)
+    .centerCrop()
+    .signature(ObjectKey(product.updatedAt))
+    .diskCacheStrategy(DiskCacheStrategy.AUTOMATIC)
+    .into(binding.coverImage)
+```
+
+这些配置分别解决：
+
+| 配置 | 解决的问题 |
+| --- | --- |
+| `placeholder` | 加载前保持布局稳定 |
+| `error` | 加载失败时展示明确状态 |
+| `centerCrop` | 商品图按容器裁剪 |
+| `signature(ObjectKey(...))` | 商品图更新后改变缓存 key |
+| `diskCacheStrategy` | 控制磁盘缓存策略 |
+| `into(imageView)` | 绑定目标 View，并让 Glide 管理旧请求 |
+
+### 3.4.3 RecyclerView 中的正确写法
+
+在 RecyclerView 中，重点是：**每次绑定都要给复用的 ImageView 发起新请求，或者显式清理旧请求**。
+
+```kotlin
+class ProductAdapter(
+    private val fragment: Fragment
+) : ListAdapter<Product, ProductViewHolder>(ProductDiffCallback) {
+
+    override fun onBindViewHolder(holder: ProductViewHolder, position: Int) {
+        val product = getItem(position)
+        holder.bind(fragment, product)
+    }
+
+    override fun onViewRecycled(holder: ProductViewHolder) {
+        holder.clear(fragment)
+    }
+}
+
+class ProductViewHolder(
+    private val binding: ItemProductBinding
+) : RecyclerView.ViewHolder(binding.root) {
+
+    fun bind(fragment: Fragment, product: Product) {
+        binding.nameText.text = product.name
+
+        Glide.with(fragment)
+            .load(product.coverUrl)
+            .placeholder(R.drawable.ic_product_placeholder)
+            .error(R.drawable.ic_product_error)
+            .centerCrop()
+            .signature(ObjectKey(product.updatedAt))
+            .into(binding.coverImage)
+    }
+
+    fun clear(fragment: Fragment) {
+        Glide.with(fragment).clear(binding.coverImage)
+    }
+}
+```
+
+为什么要这样写？
+
+- `into(binding.coverImage)` 会覆盖这个 ImageView 上一次的图片请求；
+- `clear(binding.coverImage)` 可以在 item 回收时取消不再需要的请求；
+- 如果某些 item 不需要加载图片，也应该 clear 后再设置本地 Drawable；
+- 否则旧请求可能晚于新绑定返回，造成图片错位。
+
+Glide 对 RecyclerView 的处理已经很成熟，但前提是业务代码遵守“复用 View 必须重新绑定或清理”的规则。
+
+### 3.4.4 详情页缩略图与大图
+
+商品详情页常见需求是先显示缩略图，再加载高清图。
+
+```kotlin
+Glide.with(fragment)
+    .load(product.detailImageUrl)
+    .thumbnail(
+        Glide.with(fragment)
+            .load(product.coverUrl)
+            .centerCrop()
+    )
+    .placeholder(R.drawable.ic_product_placeholder)
+    .error(R.drawable.ic_product_error)
+    .fitCenter()
+    .into(binding.detailImage)
+```
+
+这类写法把列表封面和详情大图串起来，能减少详情页白屏感。
+
+### 3.4.5 后台线程获取 Bitmap
+
+有些业务不是把图片显示到 `ImageView`，而是需要拿到 Bitmap 做分享、通知栏、截图合成或本地处理。
+
+```kotlin
+val futureTarget = Glide.with(context)
+    .asBitmap()
+    .load(product.detailImageUrl)
+    .submit(width, height)
+
+val bitmap = futureTarget.get()
+
+Glide.with(context).clear(futureTarget)
+```
+
+这类代码必须放在后台线程，并且使用完成后要 clear。否则容易阻塞主线程或持有不必要资源。
+
+## 3.5 同一个业务，用 Coil 和 Glide 怎么选
+
+现在回到商品列表这个场景。
+
+| 问题 | Coil 方案 | Glide 方案 |
+| --- | --- | --- |
+| Compose 列表 | `AsyncImage` + `ImageRequest` | 可用 Compose 集成，但不是最自然选择 |
+| RecyclerView 列表 | 可用 ImageView target | `Glide.with(fragment).load(url).into(imageView)` 非常成熟 |
+| 生命周期绑定 | 跟随 Compose 和请求作用域 | `with(Activity/Fragment/View)` 体系成熟 |
+| 缓存配置 | 通过 `ImageLoader` 配置 memory/disk/network | 通过 Glide 默认多级缓存和 `AppGlideModule` 配置 |
+| 网络栈 | Coil 3.x 需要单独接入 OkHttp/Ktor network artifact | 默认有网络栈，也可接入 OkHttp/Volley |
+| Kotlin 友好性 | 很高 | 可用 Kotlin，但 API 风格偏传统 |
+| 存量项目 | 新项目优势明显 | 存量 View 项目优势明显 |
+| 学习成本 | 低到中 | 中 |
+
+推荐选择：
+
+- 新建 Compose 项目：优先 Coil；
+- 传统 View / RecyclerView 项目：优先 Glide；
+- 已大量使用 Glide 的老项目：继续规范 Glide，不要为了追新立刻迁移；
+- 准备从 View 迁移到 Compose 的项目：允许 Coil 和 Glide 在过渡期共存，但要收敛到统一封装；
+- 课程综合项目：如果主线是 Compose + Kotlin + Jetpack，图片框架建议使用 Coil。
+
+## 3.6 从 API 反推框架内部结构
+
+看过真实 API 后，再回到原理就更自然。
+
+### 3.6.1 Coil 的请求链路
 
 ```text
-Image URL
+AsyncImage
   -> ImageRequest
-  -> RequestManager / ImageLoader
-  -> Memory Cache
-  -> Disk Cache
-  -> Network Fetcher
+  -> ImageLoader
+  -> Interceptor Chain
+  -> MemoryCache
+  -> DiskCache
+  -> Fetcher
   -> Decoder
-  -> Transformation
-  -> Target
-  -> ImageView / Compose UI
+  -> Painter / Compose UI
 ```
 
-这条链路可以拆成几个关键阶段。
+对应到代码：
 
-### 3.3.1 创建图片请求
+- `AsyncImage(model = ...)` 是 Compose 层入口；
+- `ImageRequest.Builder` 描述一次请求；
+- `ImageLoader` 执行请求并管理缓存、网络、解码；
+- `components` 注册网络获取、解码和扩展能力；
+- `MemoryCache` / `DiskCache` 控制缓存；
+- `Painter` 把最终结果交给 Compose 绘制。
 
-图片请求不仅包含 URL，还可能包含：
-
-- 目标控件；
-- 占位图；
-- 错误图；
-- 图片尺寸；
-- 缩放方式；
-- 圆角、裁剪、模糊等变换；
-- 缓存策略；
-- 请求优先级；
-- 生命周期；
-- 成功、失败和取消回调。
-
-例如在传统 View 项目中，图片加载通常围绕 `ImageView` 展开；在 Compose 项目中，图片加载通常围绕可组合函数和状态展开。
-
-### 3.3.2 查找内存缓存
-
-内存缓存是图片加载最快的来源。
-
-如果图片已经在内存中，框架可以直接复用 Bitmap 或图片对象，避免网络请求、磁盘读取和重新解码。
-
-内存缓存通常使用 LRU 策略：
+### 3.6.2 Glide 的请求链路
 
 ```text
-最近使用的图片优先保留
-长时间未使用的图片优先淘汰
-缓存大小超过阈值时触发清理
+Glide.with(fragment)
+  -> RequestManager
+  -> RequestBuilder
+  -> Request
+  -> Engine
+  -> Active Resources
+  -> Memory Cache
+  -> Resource Disk Cache
+  -> Data Disk Cache
+  -> ModelLoader / DataFetcher
+  -> Decoder
+  -> Target(ImageView)
 ```
 
-内存缓存的核心矛盾是：缓存越大，命中率越高，但内存压力也越大；缓存越小，内存更安全，但重复解码和网络请求会增加。
+对应到代码：
 
-### 3.3.3 查找磁盘缓存
+- `Glide.with(fragment)` 创建与生命周期绑定的 `RequestManager`；
+- `.load(url)` 创建请求模型；
+- `.placeholder()`、`.centerCrop()`、`.signature()` 修改请求选项；
+- `.into(imageView)` 绑定目标 View；
+- `clear(imageView)` 取消请求并释放目标资源。
 
-如果内存缓存没有命中，框架会继续查找磁盘缓存。
+这样读源码时就不会从类名海洋里迷路。先找到入口 API，再沿着请求链路往下看。
 
-磁盘缓存通常用于保存：
+## 3.7 缓存：不要只背“内存缓存和磁盘缓存”
 
-- 网络下载得到的原始图片数据；
-- 解码或变换后的图片结果；
-- HTTP 缓存响应。
+图片缓存不是一句“有缓存”就能讲清楚。不同框架的缓存层次和 key 设计会影响真实效果。
 
-磁盘缓存比内存慢，但比网络请求快得多，也能减少流量消耗。
+### 3.7.1 Glide 的多级缓存
 
-磁盘缓存需要考虑：
+Glide 默认会按多层缓存查找资源：
 
-- 缓存目录；
-- 缓存大小；
-- 文件命名；
-- 缓存淘汰；
-- 缓存版本；
-- 服务端缓存头；
-- 清理策略。
+```text
+Active Resources
+  -> Memory Cache
+  -> Resource Disk Cache
+  -> Data Disk Cache
+  -> Original Source
+```
 
-### 3.3.4 网络获取图片
+这意味着：
 
-当内存缓存和磁盘缓存都没有命中时，框架才会从网络获取图片。
+- 如果图片正显示在另一个 View 中，可以直接复用 active resource；
+- 如果最近加载过，可以从 memory cache 命中；
+- 如果解码和变换结果写入过磁盘，可以从 resource disk cache 命中；
+- 如果原始数据写入过磁盘，可以从 data disk cache 重新解码；
+- 全部失败才回到网络、文件或 Uri 等原始来源。
 
-网络获取阶段需要处理：
+### 3.7.2 缓存 key 不只是 URL
 
-- HTTP 请求；
-- 重定向；
-- 超时；
-- 失败重试；
-- 网络缓存；
-- 下载进度；
-- 请求取消；
-- Cookie 或鉴权；
-- CDN 图片参数。
+对于 Glide，缓存 key 至少会包含 model，也会受签名、尺寸、变换、选项和数据类型影响。对于 Coil，同样可以通过 memory/disk cache key 或请求参数影响缓存结果。
 
-很多图片加载框架会复用 OkHttp 作为底层网络能力，因为 OkHttp 已经提供了连接池、缓存、拦截器、超时和 TLS 等成熟能力。
+商品图更新就是典型例子：
 
-### 3.3.5 解码和采样
+```kotlin
+// Coil
+.memoryCacheKey("product_cover_${product.id}_${product.updatedAt}")
+.diskCacheKey("product_cover_${product.id}_${product.updatedAt}")
 
-下载得到的图片数据不能直接显示，通常需要先解码成可以渲染的图片对象。
+// Glide
+.signature(ObjectKey(product.updatedAt))
+```
 
-在 Android 中，Bitmap 的内存占用和图片尺寸、像素格式密切相关。
+这比“清空全部缓存”更可控。清空全部缓存既影响性能，也可能影响其他页面。
 
-例如一张 4000 x 3000 的 ARGB_8888 图片，大致需要：
+### 3.7.3 不要随意跳过缓存
+
+跳过缓存通常只适合非常特殊的图片，例如验证码、实时监控画面、一次性临时图片。
+
+```kotlin
+Glide.with(fragment)
+    .load(captchaUrl)
+    .skipMemoryCache(true)
+    .diskCacheStrategy(DiskCacheStrategy.NONE)
+    .into(binding.captchaImage)
+```
+
+普通商品图、头像、文章封面不应该随意关闭缓存。缓存命中往往是列表流畅度的关键。
+
+## 3.8 解码与尺寸：为什么要给图片稳定尺寸
+
+图片内存占用和像素尺寸强相关。
 
 ```text
 4000 x 3000 x 4 bytes = 48,000,000 bytes
 ```
 
-也就是约 45.8 MB。对于一个列表缩略图来说，这样的内存占用完全没有必要。
+一张 4000 x 3000 的 ARGB_8888 图片大约需要 45.8 MB。列表里如果直接解码原图，很快就会出现卡顿或内存压力。
 
-因此图片框架通常会根据目标控件尺寸进行采样解码：
-
-```text
-原图尺寸：4000 x 3000
-目标尺寸：400 x 300
-采样解码：只解码接近目标尺寸的图片
-```
-
-采样的目标不是让图片“越小越好”，而是在清晰度和内存占用之间取得平衡。
-
-### 3.3.6 图片变换
-
-图片变换是指在显示前对图片进行加工，例如：
-
-- CenterCrop；
-- FitCenter；
-- 圆角；
-- 圆形头像；
-- 模糊；
-- 灰度；
-- 自定义滤镜；
-- 水印。
-
-变换通常会改变最终缓存 key。因为同一个 URL，如果应用了不同圆角或尺寸，最终结果并不相同。
-
-这也是为什么图片缓存不能只用 URL 作为唯一依据，还需要考虑尺寸、变换、解码配置等参数。
-
-### 3.3.7 显示到目标对象
-
-最终图片会显示到目标对象上。
-
-目标对象可能是：
-
-- `ImageView`；
-- 自定义 View；
-- 通知栏 RemoteViews；
-- App Widget；
-- Compose 图片组件；
-- 预加载目标；
-- 只获取 Bitmap 而不显示的业务逻辑。
-
-成熟框架会在显示前再次确认请求是否仍然有效。例如 RecyclerView 的 item 已经被复用，旧请求就不应该再把图片设置到新的 item 上。
-
-## 3.4 图片加载框架的核心模块
-
-虽然不同框架实现不同，但一个图片加载框架通常会包含下面这些模块。
-
-| 模块 | 职责 |
-| --- | --- |
-| ImageRequest | 描述一次图片请求，包括数据源、目标、尺寸、缓存、变换和回调 |
-| RequestManager | 管理请求的开始、暂停、恢复、取消和生命周期绑定 |
-| Engine / ImageLoader | 负责调度请求，协调缓存、下载、解码和结果分发 |
-| MemoryCache | 缓存解码后的图片对象，提高重复显示速度 |
-| DiskCache | 缓存原始数据或变换后的结果，减少网络请求 |
-| Fetcher | 从网络、文件、资源、ContentProvider 等来源获取图片数据 |
-| Decoder | 将图片数据解码成 Bitmap、Drawable 或平台图片对象 |
-| Transformation | 对图片进行裁剪、圆角、模糊等变换 |
-| Target | 接收最终结果，通常是 ImageView 或 Compose 状态 |
-| Lifecycle | 根据页面生命周期暂停、恢复或取消请求 |
-
-可以把这些模块理解成一个简化版架构：
-
-```text
-ImageRequest
-  -> RequestManager
-  -> Engine
-      -> MemoryCache
-      -> DiskCache
-      -> Fetcher
-      -> Decoder
-      -> Transformation
-  -> Target
-```
-
-后续阅读 Coil 或 Glide 源码时，不要一开始陷入所有类名。先把读到的类放进这张结构图里，就不容易迷路。
-
-## 3.5 缓存：图片加载性能的核心
-
-图片加载框架的性能，很大程度取决于缓存设计。
-
-### 3.5.1 三级来源
-
-图片通常有三个来源：
-
-```text
-内存缓存
-  -> 磁盘缓存
-  -> 网络请求
-```
-
-访问速度大致是：
-
-```text
-内存缓存最快
-磁盘缓存次之
-网络请求最慢
-```
-
-因此，框架会优先检查内存缓存，再检查磁盘缓存，最后才访问网络。
-
-### 3.5.2 缓存 key
-
-缓存 key 不能只看 URL。
-
-一个完整缓存 key 可能包含：
-
-- URL 或数据源；
-- 图片尺寸；
-- 缩放模式；
-- 变换参数；
-- 解码格式；
-- 请求参数；
-- 缓存版本。
-
-例如同一个头像 URL，在列表中显示为 48dp 圆形头像，在详情页显示为 240dp 大图。它们可能需要不同的缓存结果。
-
-### 3.5.3 缓存不是越多越好
-
-缓存可以提升速度，但也会带来成本：
-
-- 内存缓存过大，可能导致内存压力和 OOM；
-- 磁盘缓存过大，可能占用用户存储空间；
-- 过期策略不合理，可能显示旧图片；
-- 缓存 key 设计不合理，可能命中错误结果；
-- 对临时图片也缓存，可能浪费资源。
-
-工程实践中，需要根据业务设置合理策略。例如头像、商品图、文章封面适合缓存；验证码、一次性临时图片、强实时图片可能不适合长期缓存。
-
-## 3.6 生命周期：图片请求不能脱离页面存在
-
-图片加载必须感知生命周期。
-
-例如：
-
-- Activity 已经销毁，请求不应该继续回调 UI；
-- Fragment View 已经销毁，请求不应该继续持有旧 View；
-- RecyclerView item 被复用，旧请求应该取消；
-- 页面进入后台时，可以暂停低优先级请求；
-- 页面重新可见时，可以恢复请求。
-
-传统 View 项目中，Glide 常见写法是：
+因此图片加载代码要尽量让框架知道目标尺寸：
 
 ```kotlin
-Glide.with(fragment)
-    .load(url)
-    .into(imageView)
+// Compose
+Modifier.size(72.dp)
+
+// Glide
+.override(144, 144)
 ```
 
-这里的 `with(fragment)` 不只是为了拿 Context，更重要的是把请求绑定到 Fragment 生命周期。
+多数情况下，`ImageView` 尺寸、Compose 约束和 `ContentScale` 已经能帮助框架推断目标尺寸。但如果目标尺寸不稳定、布局先 wrap_content 后异步变化，就容易造成过大解码或重复请求。
 
-Compose 项目中，图片加载需要适配组合生命周期和状态变化。图片请求通常会随 composable 的进入、离开和参数变化而创建、取消或重新执行。
+## 3.9 生命周期与列表复用
 
-图片加载框架如果不处理生命周期，就容易出现“页面已经没了，请求还在跑”的问题。
+图片请求必须跟随 UI 生命周期。
 
-## 3.7 列表复用中的图片问题
-
-图片加载最容易出问题的场景是列表。
-
-### 3.7.1 图片错位
-
-RecyclerView 会复用 item view。假设第一个 item 原本要加载 A 图片，但用户快速滑动后，这个 View 被复用给另一个 item，应该显示 B 图片。
-
-如果 A 请求晚于 B 请求返回，就可能把 A 显示到 B 的位置，形成图片错位。
-
-解决思路：
-
-- 每次绑定 item 时发起新的图片请求；
-- 取消或覆盖旧请求；
-- 框架在设置结果前确认目标仍然对应当前请求；
-- 不要在异步回调中直接盲目设置图片。
-
-### 3.7.2 闪烁
-
-列表快速滑动时，图片可能反复显示占位图、加载图、最终图，造成闪烁。
-
-常见原因包括：
-
-- 缓存命中率低；
-- item 重新绑定过于频繁；
-- 图片尺寸不稳定；
-- 占位图和最终图比例差异过大；
-- 没有使用稳定 key；
-- 列表预加载策略不合理。
-
-### 3.7.3 预加载
-
-预加载是为了在用户看到图片前提前下载或解码部分图片。
-
-预加载适合：
-
-- 商品列表；
-- 瀑布流；
-- 图片墙；
-- 下一页内容；
-- 大图浏览前后相邻图片。
-
-但预加载不能滥用。过度预加载会增加流量、内存和磁盘压力，甚至影响当前屏幕图片加载。
-
-## 3.8 主流图片加载框架对比
-
-Android 图片加载框架经历过多轮演进。
-
-| 框架 | 特点 | 适用场景 |
+| 场景 | 错误做法 | 推荐做法 |
 | --- | --- | --- |
-| Universal Image Loader | 早期经典图片加载框架 | 主要用于历史项目了解 |
-| Picasso | API 简洁，早期使用广泛 | 简单 View 项目或历史项目维护 |
-| Glide | 功能完整，生命周期和列表场景成熟 | 传统 View 项目、复杂图片场景、大量存量项目 |
-| Fresco | 图片管线设计复杂，曾强调大图和内存管理 | 特殊图片管线、大图场景、历史项目维护 |
-| Coil | Kotlin 友好，协程支持好，Compose 适配自然 | Kotlin、Compose、现代 Android 新项目 |
+| Fragment 中加载图片 | 使用 applicationContext 直接发请求 | `Glide.with(fragment)` 或 Compose 中使用 Coil |
+| RecyclerView item 被复用 | 旧请求不取消 | 新请求 `into(imageView)` 或 `clear(imageView)` |
+| Compose 列表 | item 没有稳定 key，图片尺寸不稳定 | `items(key = ...)` + 稳定尺寸 + 封装后的 `AsyncImage` |
+| 页面销毁 | 请求继续持有旧 View | 绑定页面生命周期，让框架自动取消 |
+| 自定义 Target | 回调里持有 View 不释放 | 在清理回调里移除引用 |
 
-### 3.8.1 Coil
+图片错位的根本原因不是“图片框架不可靠”，而是异步请求结果和被复用的 UI 目标失去了对应关系。
 
-Coil 的名字来自 Coroutine Image Loader。它的特点是：
+## 3.10 项目级封装：别让框架调用散落一地
 
-- Kotlin 友好；
-- 与协程生态结合自然；
-- Compose 支持好；
-- API 相对简洁；
-- 可以与 OkHttp、Ktor 等网络能力配合；
-- 适合现代 Kotlin / Compose 项目。
+业务代码中到处直接写 Coil 或 Glide 参数，会带来几个问题：
 
-对于新建的 Kotlin + Compose 项目，通常可以优先考虑 Coil。
+- 占位图、错误图风格不统一；
+- CDN 尺寸参数散落；
+- 缓存 key 策略不统一；
+- 失败埋点和耗时统计不好做；
+- 将来迁移框架成本很高；
+- 测试时很难替换图片加载行为。
 
-但选型时仍要验证项目需要的能力，例如 GIF、SVG、视频帧、特殊缓存策略、自定义解码器、图片变换和监控接入。
+### 3.10.1 Compose 项目的 Coil 封装
 
-### 3.8.2 Glide
+```kotlin
+@Composable
+fun AppImage(
+    url: String?,
+    contentDescription: String?,
+    modifier: Modifier = Modifier,
+    cacheKey: String? = url,
+    contentScale: ContentScale = ContentScale.Crop
+) {
+    AsyncImage(
+        model = ImageRequest.Builder(LocalContext.current)
+            .data(url)
+            .apply {
+                if (cacheKey != null) {
+                    memoryCacheKey(cacheKey)
+                    diskCacheKey(cacheKey)
+                }
+            }
+            .crossfade(true)
+            .build(),
+        placeholder = painterResource(R.drawable.ic_image_placeholder),
+        error = painterResource(R.drawable.ic_image_error),
+        contentDescription = contentDescription,
+        contentScale = contentScale,
+        modifier = modifier
+    )
+}
+```
 
-Glide 是 Android 传统 View 项目中非常成熟的图片加载框架。
+业务代码变成：
 
-它的特点是：
+```kotlin
+AppImage(
+    url = product.coverUrl,
+    contentDescription = product.name,
+    cacheKey = "product_cover_${product.id}_${product.updatedAt}",
+    modifier = Modifier.size(72.dp)
+)
+```
 
-- 功能完整；
-- 传统 View 和 RecyclerView 场景成熟；
-- 生命周期绑定能力强；
-- 缓存、变换、缩略图、预加载等能力丰富；
-- 存量项目使用率高；
-- 文档和社区经验多。
+这层封装不应该遮蔽所有 Coil 能力，只负责沉淀项目公共约定。
 
-如果项目是传统 XML View、RecyclerView 为主，或者已经大量使用 Glide，继续使用 Glide 往往是稳妥选择。
+### 3.10.2 View 项目的 Glide 封装
 
-### 3.8.3 Picasso
+```kotlin
+fun ImageView.loadProductCover(
+    fragment: Fragment,
+    product: Product
+) {
+    Glide.with(fragment)
+        .load(product.coverUrl)
+        .placeholder(R.drawable.ic_product_placeholder)
+        .error(R.drawable.ic_product_error)
+        .centerCrop()
+        .signature(ObjectKey(product.updatedAt))
+        .into(this)
+}
+```
 
-Picasso 的 API 非常简洁，早期很受欢迎。
+业务代码变成：
 
-它适合用来理解图片加载框架的基本模型，但在现代 Android 项目中，通常不再作为新项目首选。
+```kotlin
+binding.coverImage.loadProductCover(fragment, product)
+```
 
-维护老项目时，如果 Picasso 使用范围不大，可以评估是否迁移到 Coil 或 Glide；如果使用稳定且没有明显问题，也不一定要为了追新而迁移。
-
-### 3.8.4 Fresco
-
-Fresco 曾经以图片管线和内存管理能力著称，尤其在大图、渐进式 JPEG、复杂图片处理场景中有特色。
-
-它的学习成本和接入成本相对更高。普通业务项目不一定需要 Fresco 的复杂能力，但在特定历史项目或特殊图片场景中仍然可能遇到。
-
-## 3.9 选型建议
-
-图片加载框架选型可以先看项目形态。
-
-| 项目场景 | 推荐思路 |
-| --- | --- |
-| Kotlin + Compose 新项目 | 优先考虑 Coil |
-| Kotlin + XML View 项目 | Coil 或 Glide 都可评估，取决于团队经验和功能需求 |
-| Java / 传统 View 存量项目 | Glide 通常更稳妥 |
-| 已大量使用 Glide 的项目 | 不建议无理由迁移，优先规范封装和使用方式 |
-| 简单课程 Demo | Coil 更容易体现现代 Android 技术栈 |
-| 特殊大图或复杂图片管线 | 可评估 Fresco 或框架自定义扩展能力 |
-
-选型时不要只看“谁更流行”，而要结合：
-
-- UI 技术栈是 View 还是 Compose；
-- 团队熟悉 Kotlin 和协程的程度；
-- 是否需要 GIF、SVG、视频帧、大图、缩略图和预加载；
-- 是否已有历史框架；
-- 是否需要统一监控图片加载耗时和失败率；
-- 是否需要和 OkHttp、缓存、鉴权、CDN 参数配合；
-- 迁移成本是否可控。
-
-## 3.10 工程封装建议
-
-企业项目通常不会在业务代码中到处直接写复杂图片加载参数，而是做一层轻量封装。
-
-适合封装的内容：
+封装层适合放：
 
 - 默认占位图和错误图；
-- 圆角、头像、封面图等常见样式；
-- CDN 图片尺寸参数；
-- 图片加载日志和监控；
-- 失败重试策略；
-- 缓存策略约定；
-- 列表预加载策略；
+- 商品封面、头像、详情大图等常见样式；
+- CDN 尺寸参数；
+- 缓存版本规则；
+- 失败日志和埋点；
 - 测试替换入口。
 
-不适合封装的内容：
+封装层不适合把框架所有 API 原样包一遍。那样只是制造另一套更难维护的 API。
 
-- 把框架所有 API 原样包一层；
-- 屏蔽框架的关键能力；
-- 所有业务场景都强行使用同一套参数；
-- 为了统一而牺牲可读性和可扩展性。
+## 3.11 Picasso、Fresco 与历史框架怎么讲
 
-一个比较合理的封装方式是：
+课程不需要把所有图片框架讲到同样深度。
 
-```text
-业务代码
-  -> ImageLoaderFacade / ImageLoaderExt
-  -> Coil / Glide
+| 框架 | 课程定位 | 讲解重点 |
+| --- | --- | --- |
+| Coil | 主讲 | Compose、Kotlin、ImageRequest、ImageLoader、缓存和网络组件 |
+| Glide | 主讲 | View、RecyclerView、生命周期、缓存、Target、资源复用 |
+| Picasso | 了解 | API 简洁、早期项目维护、为什么现代新项目不常优先选 |
+| Fresco | 了解 | 图片管线、大图、渐进式图片、接入和学习成本 |
+| Universal Image Loader | 历史 | 早期图片加载方案和技术演进 |
+
+Picasso 可以用来说明“简单 API 的价值”，但现代项目更常在 Coil 和 Glide 之间选择。
+
+Fresco 可以用来说明“图片管线设计”的复杂性，但普通业务项目不一定需要这种重量级方案。
+
+## 3.12 源码阅读入口
+
+源码阅读不要从所有类开始，而要从业务代码入口开始。
+
+### 3.12.1 Coil 源码主线
+
+从这段代码开始：
+
+```kotlin
+AsyncImage(
+    model = ImageRequest.Builder(LocalContext.current)
+        .data(product.coverUrl)
+        .build(),
+    contentDescription = product.name
+)
 ```
 
-封装层只沉淀项目公共约定，让简单场景更简单，同时保留特殊场景直接使用框架能力的空间。
-
-## 3.11 源码阅读入口
-
-阅读图片框架源码时，建议从最小使用代码出发。
-
-### 3.11.1 Coil 阅读主线
-
-可以先围绕这几个概念阅读：
+优先看：
 
 ```text
-ImageRequest
+AsyncImage
+  -> rememberAsyncImagePainter
+  -> ImageRequest
   -> ImageLoader
   -> Interceptor Chain
   -> MemoryCache
   -> Fetcher
   -> Decoder
-  -> Target
 ```
 
-重点关注：
+阅读目标：
 
-- 请求如何创建；
-- 请求如何进入 ImageLoader；
-- 拦截器链如何组织；
-- 内存缓存何时命中；
-- Fetcher 如何获取数据；
-- Decoder 如何解码；
-- 结果如何回到 UI。
+- `AsyncImage` 如何把 Compose 约束传给请求；
+- `ImageRequest` 如何描述数据源、尺寸、缓存和回调；
+- `ImageLoader` 如何调度请求；
+- network component 如何接入 OkHttp 或 Ktor；
+- 缓存命中和失败结果如何返回。
 
-### 3.11.2 Glide 阅读主线
+### 3.12.2 Glide 源码主线
 
-可以先围绕这条链路阅读：
+从这段代码开始：
+
+```kotlin
+Glide.with(fragment)
+    .load(product.coverUrl)
+    .centerCrop()
+    .into(binding.coverImage)
+```
+
+优先看：
 
 ```text
 Glide.with()
   -> RequestManager
   -> RequestBuilder
-  -> Request
+  -> SingleRequest
   -> Engine
-  -> Cache
+  -> DecodeJob
   -> DataFetcher
-  -> Decoder
+  -> Resource
   -> Target
 ```
 
-重点关注：
+阅读目标：
 
-- `Glide.with()` 如何绑定生命周期；
-- RequestManager 如何管理请求；
-- Engine 如何协调缓存、加载和解码；
-- Target 如何接收结果；
-- RecyclerView 场景下请求如何被取消或复用。
+- `Glide.with(fragment)` 如何绑定生命周期；
+- `RequestBuilder` 如何收集请求配置；
+- `Engine` 如何协调缓存和解码；
+- `Target` 如何接收结果和清理资源；
+- RecyclerView 复用时请求如何被覆盖或取消。
 
-源码阅读的目标不是读完所有类，而是看清框架如何把“加载一张图”拆成可扩展、可缓存、可取消、可感知生命周期的一组协作对象。
+## 3.13 常见错误与修正
 
-## 3.12 常见错误
-
-图片加载框架使用中常见问题包括：
-
-| 错误 | 后果 | 建议 |
+| 错误 | 后果 | 修正 |
 | --- | --- | --- |
-| 用 Activity Context 加载长生命周期图片 | 可能造成生命周期不匹配 | 优先使用与页面一致的 Fragment、View 或 Compose 生命周期 |
-| 列表中手动异步设置图片 | 容易图片错位 | 使用框架绑定目标对象，让框架处理取消和复用 |
-| 加载超大原图 | 内存暴涨、滚动卡顿 | 设置合适尺寸，使用采样和缩略图 |
-| 不设置占位图尺寸 | 列表布局跳动 | 使用稳定宽高和比例一致的占位图 |
-| 缓存策略混乱 | 图片过期或重复请求 | 为头像、封面、临时图分别制定策略 |
-| 过度使用变换 | CPU 开销增加 | 常用变换可缓存，复杂变换谨慎使用 |
-| 预加载过多 | 流量和内存压力增加 | 根据列表速度、屏幕数量和网络状态控制范围 |
-| 忽视失败状态 | 弱网体验差 | 设置错误图、重试入口和日志监控 |
-| 到处散落框架调用 | 后续迁移困难 | 建立项目级轻量封装和使用规范 |
+| Compose 列表中图片没有固定尺寸 | 可能重复测量、加载过大图片 | 给图片明确 `size`、`aspectRatio` 或稳定约束 |
+| Coil 3.x 只加 `coil-compose` 就加载网络图 | 网络 URL 无法正常加载 | 额外接入 `coil-network-okhttp` 或 Ktor 网络模块 |
+| RecyclerView 中某些 item 不加载图片却不 clear | 旧图片请求可能回写 | 在分支中调用 `Glide.with(fragment).clear(imageView)` |
+| 用 applicationContext 加载页面图片 | 生命周期不匹配 | 使用 Activity、Fragment、View 或 Compose 作用域 |
+| 商品图更新后只清空全部缓存 | 性能差、影响面大 | 用 cache key 或 `signature` 表达版本 |
+| 验证码也走默认缓存 | 显示旧验证码 | 对实时图片关闭磁盘和内存缓存 |
+| 自定义 Target 不释放资源 | 泄漏或显示旧内容 | 在清理回调中移除引用 |
+| 封装层过度抽象 | 特殊场景难处理 | 只封装项目约定，保留框架扩展能力 |
 
-## 3.13 简化版图片加载框架设计
+## 3.14 本章小结
 
-为了理解图片加载框架的本质，可以尝试设计一个简化版本。
+这一章的重点不是“图片加载原理背诵”，而是把原理落到真实框架。
 
-它不需要支持所有能力，只要覆盖核心链路：
+你需要记住：
 
-```text
-ImageRequest
-  -> SimpleImageLoader
-  -> MemoryCache
-  -> DiskCache
-  -> NetworkFetcher
-  -> BitmapDecoder
-  -> ImageTarget
-```
-
-最小能力可以包括：
-
-- 支持 URL 加载；
-- 支持 ImageView 显示；
-- 支持占位图和错误图；
-- 支持内存缓存；
-- 支持磁盘缓存；
-- 支持后台线程下载和解码；
-- 支持主线程更新 UI；
-- 支持请求取消；
-- 支持列表复用校验。
-
-这个练习的重点不是重新造一个生产级框架，而是理解成熟框架为什么需要这些模块。
-
-## 3.14 小结
-
-图片加载框架不是“显示图片的工具类”，而是一套围绕图片请求、缓存、解码、生命周期和 UI 复用建立起来的工程系统。
-
-本章的核心结论是：
-
-- 图片加载的难点不在 URL，而在性能、内存、生命周期和列表复用；
-- 内存缓存、磁盘缓存和网络请求共同决定加载体验；
-- Bitmap 解码和目标尺寸直接影响内存占用；
-- 生命周期绑定是避免泄漏和无效回调的关键；
-- 列表场景必须处理请求取消、目标校验和缓存命中；
-- Coil 更适合现代 Kotlin / Compose 项目，Glide 在传统 View 和存量项目中非常成熟；
-- 项目中应该建立轻量封装和统一规范，而不是到处散落复杂调用。
+- Coil 的主线是 `AsyncImage -> ImageRequest -> ImageLoader -> Components -> Cache / Fetcher / Decoder`；
+- Glide 的主线是 `Glide.with -> RequestManager -> RequestBuilder -> Engine -> Cache / DataFetcher / Decoder -> Target`；
+- Compose 新项目优先考虑 Coil，传统 View 和 RecyclerView 项目优先考虑 Glide；
+- 图片加载性能主要受尺寸、缓存、解码、列表复用和生命周期影响；
+- 缓存 key 应该表达图片版本，而不是一出问题就清空全部缓存；
+- 项目中需要轻量封装图片加载公共规则，但不能把框架能力完全包死。
 
 ## 3.15 思考题
 
-1. 为什么图片加载框架不能只用 URL 作为缓存 key？
-2. RecyclerView 中图片错位的根本原因是什么？
-3. 内存缓存和磁盘缓存分别解决什么问题？
-4. 为什么加载大图前要根据目标控件尺寸进行采样？
-5. 如果一个项目已经大量使用 Glide，是否应该为了使用 Compose 而立刻迁移到 Coil？
-6. 你会在项目图片加载封装层中放哪些公共能力？哪些能力不应该封装？
+1. 为什么 Compose 列表中推荐优先使用 `AsyncImage`？
+2. Coil 3.x 加载网络图片时，为什么需要额外接入 network artifact？
+3. `Glide.with(fragment)` 和 `Glide.with(context)` 在生命周期语义上有什么区别？
+4. RecyclerView 中图片错位的根本原因是什么？
+5. 商品封面更新后，Coil 和 Glide 分别可以如何改变缓存 key？
+6. 为什么验证码、商品封面、用户头像不能使用同一套缓存策略？
+7. 项目级图片封装应该包含哪些规则？哪些规则应该留给业务自己决定？
 
 ## 3.16 课后练习
 
-尝试完成一个简化版图片加载器，要求：
+基于本章商品列表场景完成两个小练习。
 
-- 支持从 URL 加载图片；
-- 使用后台线程下载和解码；
-- 使用主线程显示图片；
-- 增加内存缓存；
-- 在 RecyclerView 中避免图片错位；
-- 页面销毁或 item 复用时能够取消请求。
+### 练习一：Compose + Coil 商品列表
 
-完成后，再对照 Coil 或 Glide 的源码入口，观察成熟框架在缓存、生命周期、扩展点和错误处理上做了哪些增强。
+实现一个 `ProductListScreen`：
+
+- 使用 `LazyColumn` 展示商品列表；
+- 使用 `AsyncImage` 或封装后的 `AppImage` 展示封面；
+- 添加占位图和错误图；
+- 使用商品 `id + updatedAt` 作为缓存 key；
+- 图片尺寸保持稳定；
+- 点击商品进入详情页并展示大图。
+
+### 练习二：RecyclerView + Glide 商品列表
+
+实现一个 `ProductAdapter`：
+
+- 在 `onBindViewHolder` 中加载商品封面；
+- 使用 `placeholder`、`error`、`centerCrop`；
+- 使用 `signature(ObjectKey(product.updatedAt))` 控制缓存版本；
+- 在 `onViewRecycled` 中 clear 图片请求；
+- 对比快速滑动时有无 clear 的表现差异。
+
+完成练习后，再回头看本章的源码主线。此时你看到的就不再是一堆类名，而是一条从业务代码进入框架内部的路径。
+
+## 3.17 官方参考资料
+
+后续写示例项目或更新课程代码时，优先以官方文档为准：
+
+- Coil 官方文档：<https://coil-kt.github.io/coil/>
+- Coil Compose 文档：<https://coil-kt.github.io/coil/compose/>
+- Coil ImageLoader 文档：<https://coil-kt.github.io/coil/image_loaders/>
+- Glide 官方文档：<https://bumptech.github.io/glide/>
+- Glide 缓存文档：<https://bumptech.github.io/glide/doc/caching.html>
