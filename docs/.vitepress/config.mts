@@ -45,7 +45,18 @@ export default defineConfig({
       {
         text: '第一阶段：认识 Android 开源框架',
         items: [
-          { text: '第1章：Android 开源框架全景', link: '/chapter1/' },
+          {
+            text: '第1章：Android 开源框架全景',
+            link: '/chapter1/',
+            items: [
+              { text: '1.1 学习目标', link: '/chapter1/#chapter1-goals' },
+              { text: '1.2 为什么需要框架', link: '/chapter1/#chapter1-why' },
+              { text: '1.4 技术演进', link: '/chapter1/#chapter1-evolution' },
+              { text: '1.5 问题域与框架地图', link: '/chapter1/#chapter1-map' },
+              { text: '1.9 学习深度分层', link: '/chapter1/#chapter1-depth' },
+              { text: '1.11 框架组合', link: '/chapter1/#chapter1-composition' }
+            ]
+          },
           {
             text: '第2章：如何学习和评价一个开源框架',
             link: '/chapter2/',
@@ -59,7 +70,20 @@ export default defineConfig({
       {
         text: '第二阶段：数据获取与处理框架',
         items: [
-          { text: '第3章：图片加载框架', link: '/chapter3/' },
+          {
+            text: '第3章：图片加载框架',
+            link: '/chapter3/',
+            items: [
+              { text: '3.1 方法对齐', link: '/chapter3/#chapter3-method' },
+              { text: '3.2 问题背景', link: '/chapter3/#chapter3-problem' },
+              { text: '3.3 核心抽象与使用', link: '/chapter3/#chapter3-usage' },
+              { text: '3.6 主流程', link: '/chapter3/#chapter3-flow' },
+              { text: '3.7 核心原理', link: '/chapter3/#chapter3-principle' },
+              { text: '3.8 设计模式', link: '/chapter3/#chapter3-patterns' },
+              { text: '3.11 比较与选型', link: '/chapter3/#chapter3-selection' },
+              { text: '3.13 实践与实验', link: '/chapter3/#chapter3-practice' }
+            ]
+          },
           { text: '第4章：网络请求底层框架（建设中）' },
           { text: '第5章：接口代理与网络处理框架（建设中）' },
           { text: '第6章：JSON 序列化与数据转换（建设中）' }
