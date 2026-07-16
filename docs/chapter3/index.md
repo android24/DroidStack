@@ -1,25 +1,33 @@
 # 第 3 章：图片加载框架
 
-第一章建立了 Android 开源框架全景，第二章给出了一套学习和评价开源框架的方法。本章开始进入具体框架问题域：图片加载。
+第一章建立了 Android 开源框架全景，第二章给出了一套学习和评价开源框架的方法。本章开始进入第一个具体问题域：图片加载。
 
-这一章不是单纯讲 Coil 或 Glide 的 API，也不是孤立讲缓存、解码、生命周期这些原理点，而是作为第二章方法论的第一个完整示范：
+先不要急着问“Coil 怎么用”“Glide 怎么用”。如果你是业务开发者，更容易先遇到这些现场：
 
 ```text
-问题背景
-  -> 最小使用
-  -> 核心抽象
-  -> 工程接入
-  -> 主流程
-  -> 扩展点
-  -> 设计模式
-  -> 常见错误
-  -> 源码主线
-  -> 同类比较
-  -> 工程选型
-  -> 可玩实验
+现场一：商品列表滑得很快，图片突然串到别的商品上
+现场二：详情页加载一张大图，页面开始卡顿甚至 OOM
+现场三：商品图已经换了，用户看到的还是旧图
+现场四：Fragment 已经销毁，图片请求还在回调旧 View
+现场五：网络弱一点，列表到处白屏，失败状态也不清楚
 ```
 
-也就是说，本章要回答的不只是“图片怎么加载”，而是：
+这些问题看起来都是“图片没显示好”，但背后其实是 Android 工程中最典型的一组问题：异步、缓存、解码、生命周期、UI 复用、状态回写和框架选型。
+
+所以这一章会把图片加载框架当成一次完整的框架分析训练。你不是来背 API 的，而是来拆一条请求链：
+
+```text
+一张图片 URL
+  -> 如何变成一次请求
+  -> 如何命中缓存
+  -> 如何下载原始数据
+  -> 如何按目标尺寸解码
+  -> 如何安全回到 UI
+  -> 如何在页面销毁或列表复用时取消
+  -> 如何通过设计模式把这些复杂度组织起来
+```
+
+学完本章，你应该能够回答：
 
 - 图片加载框架解决了什么工程问题；
 - Coil、Glide 这类框架的核心抽象是什么；
@@ -29,28 +37,38 @@
 - 如何通过实验验证缓存、解码、列表复用和生命周期；
 - 如何在真实项目中做封装、选型和治理。
 
-本章分为十个部分：
+本章分为九个部分：
 
 | 小节 | 主题 | 内容 |
 | --- | --- | --- |
-| [第 3.1 节：与第二章方法论的对应关系](#chapter3-method) | 方法对齐 | 把第二章的学习框架落实到图片加载问题域 |
-| [第 3.2 节：问题背景](#chapter3-problem) | 场景入口 | 从商品列表和详情页说明图片加载为什么复杂 |
-| [第 3.3 - 3.5 节：核心抽象、最小使用与工程接入](#chapter3-usage) | 使用入口 | 用 Coil 和 Glide 抓住 Request、Loader、Cache、Fetcher、Decoder、Target 等角色 |
-| [第 3.6 节：主流程](#chapter3-flow) | 请求链路 | 分析一次图片请求从 URL 到屏幕的抽象流程、Coil 流程和 Glide 流程 |
-| [第 3.7 节：核心原理](#chapter3-principle) | 原理拆解 | 理解缓存、解码、生命周期和列表复用这些不可绕开的机制 |
-| [第 3.8 节：设计模式](#chapter3-patterns) | 模式映射 | 从 API 和源码角色中识别 Builder、Strategy、Factory、Adapter、Observer 等模式 |
+| [第 3.1 节：本章学习路线](#chapter3-method) | 任务地图 | 先把故障现场、框架能力和第二章方法论对齐 |
+| [第 3.2 节：业务场景](#chapter3-problem) | 问题入口 | 用商品列表和详情页说明图片加载为什么不是一个简单 API |
+| [第 3.3 - 3.5 节：从 API 到框架角色](#chapter3-usage) | 上手与识图 | 用 Coil 和 Glide 的最小代码识别 Request、Loader、Cache、Fetcher、Decoder、Target |
+| [第 3.6 节：请求主流程](#chapter3-flow) | 主线拆解 | 分析一次图片请求从 URL 到屏幕的抽象流程、Coil 流程和 Glide 流程 |
+| [第 3.7 节：四个核心原理](#chapter3-principle) | 原理拆解 | 解释缓存、解码、生命周期和列表复用为什么决定图片体验 |
+| [第 3.8 节：设计模式地图](#chapter3-patterns) | 模式映射 | 把 Builder、Strategy、Factory、Adapter、Observer 等模式放回真实框架流程 |
 | [第 3.9 - 3.10 节：扩展点与源码主线](#chapter3-source) | 深入框架 | 明确哪些点可以扩展，以及应该从哪里读 Coil、Glide 源码 |
 | [第 3.11 - 3.12 节：同类比较与工程选型](#chapter3-selection) | 框架决策 | 比较 Coil、Glide、Picasso、Fresco 的优劣势和适用场景 |
-| [第 3.13 - 3.15 节：工程封装、实验与错误修正](#chapter3-practice) | 可玩实践 | 通过封装、缓存侦探、图片错位、大图内存账本等实验验证知识 |
-| [第 3.16 - 3.19 节：总结、练习与资料](#chapter3-summary) | 复盘拓展 | 用思考题、课后练习和官方资料完成闭环 |
+| [第 3.13 - 3.19 节：封装、实验、练习与资料](#chapter3-practice) | 可玩实践 | 通过封装、缓存侦探、图片错位、大图内存账本等实验完成闭环 |
 
-推荐阅读方式：第一次阅读时按表格顺序走完整条链路；复习时可以直接跳到 [主流程](#chapter3-flow)、[设计模式](#chapter3-patterns)、[同类比较](#chapter3-selection) 和 [可玩实验](#chapter3-practice)，检查自己是否真的理解了框架。
+推荐阅读方式：第一次阅读时，不要跳过 [第 3.1 节](#chapter3-method) 和 [第 3.2 节](#chapter3-problem)，它们负责建立问题感；复习时可以直接跳到 [主流程](#chapter3-flow)、[设计模式](#chapter3-patterns)、[同类比较](#chapter3-selection) 和 [可玩实验](#chapter3-practice)，检查自己是否真的理解了框架。
 
 <a id="chapter3-method"></a>
 
-## 3.1 本章与第二章方法论的对应关系
+## 3.1 本章学习路线：从故障现场到框架能力
 
-第二章提出：学习一个框架，应该从问题、核心抽象、工程接入、调用链、扩展点、常见错误、源码主线和选型判断入手。本章会严格按这套框架展开。
+本章的主线不是“先介绍框架，再讲一点原理”，而是从真实故障倒推框架为什么这样设计。
+
+| 你看到的现象 | 背后的工程问题 | 本章要学的框架能力 |
+| --- | --- | --- |
+| 列表图片错位 | 异步请求和 View 复用发生竞态 | Target 绑定、请求取消、生命周期管理 |
+| 大图导致卡顿或 OOM | 原图解码过大，目标尺寸不明确 | 尺寸计算、采样解码、Bitmap 内存估算 |
+| 图片更新后仍显示旧图 | 缓存 key 设计不完整 | 内存缓存、磁盘缓存、signature、cache key |
+| 页面销毁后还在回调 | 请求没有跟随页面生命周期 | `Glide.with(fragment)`、Compose 作用域 |
+| 弱网下白屏和闪烁 | 加载状态没有被明确表达 | placeholder、error、Loading / Success / Error |
+| 项目里到处直接写框架 API | 缺少统一约定，迁移困难 | 轻量封装、日志监控、测试替换 |
+
+这条路线会对应到第二章的方法论：
 
 | 第二章方法 | 本章对应内容 |
 | --- | --- |
@@ -66,13 +84,27 @@
 | 同类比较 | Coil、Glide、Picasso、Fresco、Universal Image Loader |
 | 工程选型 | 按功能匹配、工程匹配、团队匹配、迁移成本判断 |
 
+你可以把本章看成一个小型闯关：
+
+```text
+先发现问题
+  -> 写出最小代码
+  -> 画出主流程
+  -> 找到核心角色
+  -> 解释关键原理
+  -> 标注设计模式
+  -> 比较同类框架
+  -> 做实验验证
+  -> 回到工程封装
+```
+
 本章的目标不是“学完就会背所有 API”，而是让你能用第二章的方法分析任何一个图片加载框架。
 
 <a id="chapter3-problem"></a>
 
-## 3.2 问题背景：为什么图片加载值得单独成章
+## 3.2 业务场景：一个商品列表会怎样暴露图片问题
 
-以一个商品列表和商品详情页为例：
+本章只用一个贯穿案例：商品列表和商品详情页。它足够简单，所有人都能理解；也足够真实，几乎能暴露图片加载框架要解决的全部关键问题。
 
 ```kotlin
 data class Product(
@@ -109,6 +141,8 @@ URL
 | 弱网体验差 | 白屏、闪烁、失败无反馈 | 占位图、错误图、重试 |
 | 格式多样 | WebP、GIF、SVG、视频帧处理不同 | 解码器和组件扩展 |
 
+读到这里，可以先记住一个判断：图片加载框架不是“把 URL 塞进 ImageView”的工具，而是一个围绕异步请求、缓存、解码、生命周期和 UI 状态构建的小型调度系统。
+
 这也是图片加载框架的职责边界：
 
 ```text
@@ -121,29 +155,11 @@ URL
 
 <a id="chapter3-usage"></a>
 
-## 3.3 核心抽象：先抓角色，再看 API
+## 3.3 最小使用：先用两段代码打开请求链
 
-第二章强调，学习框架要先识别核心抽象。图片加载框架虽然实现各不相同，但通常都会围绕下面这些角色组织。
+先看最小代码，因为读源码、画流程、识别设计模式都要从入口 API 开始。
 
-| 抽象角色 | 解决的问题 | Coil 中的对应 | Glide 中的对应 | 常见设计思想 |
-| --- | --- | --- | --- | --- |
-| Request | 描述一次图片请求 | `ImageRequest` | `RequestBuilder` / `SingleRequest` | Builder、Command |
-| Loader / Engine | 统一调度加载流程 | `ImageLoader` | `Engine` | Facade、Mediator |
-| Request Manager | 管理请求生命周期 | Compose 作用域 / `ImageLoader` | `RequestManager` | Lifecycle-aware |
-| Cache | 复用加载结果 | `MemoryCache`、`DiskCache` | Active Resource、Memory Cache、Disk Cache | LRU、Strategy |
-| Fetcher | 获取原始数据 | Fetcher / Network Fetcher | `DataFetcher` | Strategy、Factory |
-| Model Adapter | 适配不同数据源 | Components | `ModelLoader` | Adapter、Factory |
-| Decoder | 解码图片数据 | Decoder | Decoder | Strategy |
-| Transformation | 裁剪、圆角、模糊 | Transformation | Transformation | Strategy、Decorator |
-| Target / State | 接收加载结果 | Painter State | `Target`、`ImageViewTarget` | Observer、Callback |
-
-这张表是阅读图片框架源码的地图。后面看到新类时，可以先问：它属于 Request、Engine、Cache、Fetcher、Decoder、Transformation，还是 Target？
-
-## 3.4 最小使用：从能跑的 Demo 进入
-
-第二章要求先写最小 Demo，因为最小 Demo 是源码阅读的入口。
-
-### 3.4.1 Coil：Compose 中的最小使用
+### 3.3.1 Coil：Compose 中的最小使用
 
 ```kotlin
 @Composable
@@ -176,7 +192,7 @@ ProductCover
   -> Compose UI
 ```
 
-### 3.4.2 Glide：View 中的最小使用
+### 3.3.2 Glide：View 中的最小使用
 
 ```kotlin
 Glide.with(fragment)
@@ -199,6 +215,24 @@ ViewHolder.bind
 ```
 
 到这里，学习目标不是“会复制代码”，而是知道后续源码阅读应该从 `AsyncImage` 和 `Glide.with()` 开始。
+
+## 3.4 核心抽象：从 API 背后识别框架角色
+
+现在再回头看核心抽象，就不会像背概念。图片加载框架虽然实现各不相同，但通常都会围绕下面这些角色组织。
+
+| 抽象角色 | 解决的问题 | Coil 中的对应 | Glide 中的对应 | 常见设计思想 |
+| --- | --- | --- | --- | --- |
+| Request | 描述一次图片请求 | `ImageRequest` | `RequestBuilder` / `SingleRequest` | Builder、Command |
+| Loader / Engine | 统一调度加载流程 | `ImageLoader` | `Engine` | Facade、Mediator |
+| Request Manager | 管理请求生命周期 | Compose 作用域 / `ImageLoader` | `RequestManager` | Lifecycle-aware |
+| Cache | 复用加载结果 | `MemoryCache`、`DiskCache` | Active Resource、Memory Cache、Disk Cache | LRU、Strategy |
+| Fetcher | 获取原始数据 | Fetcher / Network Fetcher | `DataFetcher` | Strategy、Factory |
+| Model Adapter | 适配不同数据源 | Components | `ModelLoader` | Adapter、Factory |
+| Decoder | 解码图片数据 | Decoder | Decoder | Strategy |
+| Transformation | 裁剪、圆角、模糊 | Transformation | Transformation | Strategy、Decorator |
+| Target / State | 接收加载结果 | Painter State | `Target`、`ImageViewTarget` | Observer、Callback |
+
+这张表是阅读图片框架源码的地图。后面看到新类时，可以先问：它属于 Request、Engine、Cache、Fetcher、Decoder、Transformation，还是 Target？
 
 ## 3.5 工程接入：框架如何进入真实项目
 

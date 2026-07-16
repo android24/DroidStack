@@ -74,14 +74,14 @@ export default defineConfig({
             text: '第3章：图片加载框架',
             link: '/chapter3/',
             items: [
-              { text: '3.1 方法对齐', link: '/chapter3/#chapter3-method' },
-              { text: '3.2 问题背景', link: '/chapter3/#chapter3-problem' },
-              { text: '3.3 核心抽象与使用', link: '/chapter3/#chapter3-usage' },
-              { text: '3.6 主流程', link: '/chapter3/#chapter3-flow' },
-              { text: '3.7 核心原理', link: '/chapter3/#chapter3-principle' },
-              { text: '3.8 设计模式', link: '/chapter3/#chapter3-patterns' },
+              { text: '3.1 学习路线', link: '/chapter3/#chapter3-method' },
+              { text: '3.2 业务场景', link: '/chapter3/#chapter3-problem' },
+              { text: '3.3 从 API 到角色', link: '/chapter3/#chapter3-usage' },
+              { text: '3.6 请求主流程', link: '/chapter3/#chapter3-flow' },
+              { text: '3.7 四个核心原理', link: '/chapter3/#chapter3-principle' },
+              { text: '3.8 设计模式地图', link: '/chapter3/#chapter3-patterns' },
               { text: '3.11 比较与选型', link: '/chapter3/#chapter3-selection' },
-              { text: '3.13 实践与实验', link: '/chapter3/#chapter3-practice' }
+              { text: '3.13 封装与实验', link: '/chapter3/#chapter3-practice' }
             ]
           },
           { text: '第4章：网络请求底层框架（建设中）' },
