@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { withBase } from 'vitepress'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 
 type Mode = 'cache' | 'memory' | 'race' | 'failure'
 type StageState = 'idle' | 'hit' | 'work' | 'skip' | 'error'
@@ -10,7 +11,32 @@ interface Stage {
   state: StageState
 }
 
+interface Product {
+  id: string
+  name: string
+  image: string
+}
+
+const products: Product[] = [
+  {
+    id: 'backpack',
+    name: '森林背包',
+    image: withBase('/images/chapter3/lab/product_backpack.jpg')
+  },
+  {
+    id: 'headphones',
+    name: '珊瑚耳机',
+    image: withBase('/images/chapter3/lab/product_headphones.jpg')
+  },
+  {
+    id: 'camera',
+    name: '黄色相机',
+    image: withBase('/images/chapter3/lab/product_camera.jpg')
+  }
+]
+
 const mode = ref<Mode>('cache')
+const selectedProductId = ref(products[0].id)
 const memoryCacheEnabled = ref(true)
 const diskCacheEnabled = ref(true)
 const version = ref(1)
@@ -31,6 +57,8 @@ const originalHeight = ref(3000)
 const bitmapConfig = ref(4)
 const decodedWidth = ref(144)
 const decodedHeight = ref(144)
+const decodedCanvas = ref<HTMLCanvasElement | null>(null)
+const canvasReady = ref(false)
 
 const guardOldRequest = ref(false)
 const racePlayed = ref(false)
@@ -39,10 +67,16 @@ const failureType = ref('http404')
 const retryEnabled = ref(false)
 const failurePlayed = ref(false)
 
-const resourceKey = computed(() =>
-  `product-42:v${version.value}:${targetSize.value}px:${transformation.value}`
+const selectedProduct = computed(
+  () => products.find((product) => product.id === selectedProductId.value) ?? products[0]
 )
-const dataKey = computed(() => `https://img.example/42.jpg:v${version.value}`)
+
+const resourceKey = computed(() =>
+  `${selectedProduct.value.id}:v${version.value}:${targetSize.value}px:${transformation.value}`
+)
+const dataKey = computed(
+  () => `https://img.example/${selectedProduct.value.id}.jpg:v${version.value}`
+)
 
 const decodedBytes = computed(
   () => decodedWidth.value * decodedHeight.value * bitmapConfig.value
@@ -56,6 +90,33 @@ const memoryRatio = computed(() =>
 
 const formattedDecodedMemory = computed(() => formatBytes(decodedBytes.value))
 const formattedOriginalMemory = computed(() => formatBytes(originalBytes.value))
+
+const cachePreviewStyle = computed(() => ({
+  objectFit: transformation.value === 'none' ? 'contain' : 'cover',
+  borderRadius: transformation.value === 'round-16' ? '16px' : '0',
+  filter: transformation.value === 'blur-12' ? 'blur(5px)' : 'none'
+}))
+
+const raceFinalProduct = computed(() => {
+  if (!racePlayed.value) return products[2]
+  return guardOldRequest.value ? products[1] : products[0]
+})
+
+const failureVisual = computed(() => {
+  if (!failurePlayed.value) {
+    return { status: '等待请求', detail: '当前图片作为 placeholder', state: 'idle' }
+  }
+  if (failureType.value === 'timeout' && retryEnabled.value) {
+    return { status: '重试成功', detail: '退避后重新获取并交付图片', state: 'success' }
+  }
+  const labels: Record<string, { status: string; detail: string }> = {
+    http404: { status: 'HTTP 404', detail: 'Fetcher 失败，Decoder 不执行' },
+    timeout: { status: '网络超时', detail: '没有可交付的编码数据' },
+    corrupt: { status: '解码失败', detail: '获得字节，但无法生成 Bitmap' },
+    unsupported: { status: '格式不支持', detail: '没有 Decoder 能处理该内容' }
+  }
+  return { ...labels[failureType.value], state: 'error' }
+})
 
 const raceTimeline = computed(() => {
   const final = guardOldRequest.value ? '商品 B' : '商品 A（错位）'
@@ -96,8 +157,8 @@ const failureStages = computed<Stage[]>(() => {
         retryEnabled.value ? '首次超时，退避后重试一次' : '网络超时，直接失败',
         'error'
       ),
-      stage('Decoder', retryEnabled.value ? '重试成功后才可能进入' : '没有输入数据', 'skip'),
-      stage('Target', retryEnabled.value ? '展示重试结果或最终错误' : '显示 error', 'work')
+      stage('Decoder', retryEnabled.value ? '重试成功，解码图片' : '没有输入数据', retryEnabled.value ? 'work' : 'skip'),
+      stage('Target', retryEnabled.value ? '交付重试结果' : '显示 error', 'work')
     ]
   }
 
@@ -229,6 +290,14 @@ function clearAllCaches() {
   cacheStages.value = []
 }
 
+function selectProduct(product: Product) {
+  selectedProductId.value = product.id
+  cacheSource.value = '-'
+  cacheStages.value = []
+  cacheResult.value = `已切换为${product.name}，它拥有独立的数据 Key 与资源 Key`
+  failurePlayed.value = false
+}
+
 function playRace() {
   racePlayed.value = true
 }
@@ -236,6 +305,34 @@ function playRace() {
 function playFailure() {
   failurePlayed.value = true
 }
+
+function renderDecodedCanvas() {
+  if (!canvasReady.value || !decodedCanvas.value) return
+
+  const canvas = decodedCanvas.value
+  const width = Math.max(1, Math.min(800, decodedWidth.value))
+  const height = Math.max(1, Math.min(800, decodedHeight.value))
+  const image = new Image()
+  image.onload = () => {
+    canvas.width = width
+    canvas.height = height
+    const context = canvas.getContext('2d')
+    if (!context) return
+    context.imageSmoothingEnabled = true
+    context.drawImage(image, 0, 0, width, height)
+  }
+  image.src = selectedProduct.value.image
+}
+
+onMounted(() => {
+  canvasReady.value = true
+  renderDecodedCanvas()
+})
+
+watch(
+  [mode, selectedProductId, decodedWidth, decodedHeight],
+  () => nextTick(renderDecodedCanvas)
+)
 </script>
 
 <template>
@@ -252,6 +349,21 @@ function playFailure() {
       </button>
       <button type="button" role="tab" :aria-selected="mode === 'failure'" :class="{ active: mode === 'failure' }" @click="mode = 'failure'">
         失败链
+      </button>
+    </div>
+
+    <div v-if="mode !== 'race'" class="product-picker" aria-label="选择实验图片">
+      <span>实验图片</span>
+      <button
+        v-for="product in products"
+        :key="product.id"
+        type="button"
+        :aria-pressed="selectedProductId === product.id"
+        :class="{ selected: selectedProductId === product.id }"
+        @click="selectProduct(product)"
+      >
+        <img :src="product.image" :alt="product.name">
+        <strong>{{ product.name }}</strong>
       </button>
     </div>
 
@@ -305,6 +417,22 @@ function playFailure() {
         <button type="button" @click="clearAllCaches">清空全部缓存</button>
       </div>
 
+      <figure class="image-result cache-preview">
+        <div class="image-frame">
+          <img
+            :src="selectedProduct.image"
+            :alt="`${selectedProduct.name}缓存实验结果`"
+            :style="cachePreviewStyle"
+          >
+          <span class="status-badge">{{ cacheSource === '-' ? '等待请求' : cacheSource }}</span>
+          <span class="size-badge">{{ targetSize }} px · {{ transformation }}</span>
+        </div>
+        <figcaption>
+          <strong>{{ selectedProduct.name }}</strong>
+          <span>{{ cacheResult }}</span>
+        </figcaption>
+      </figure>
+
       <div class="metrics-row" aria-live="polite">
         <div><span>数据来源</span><strong>{{ cacheSource }}</strong></div>
         <div><span>模拟耗时</span><strong>{{ cacheDuration }} ms</strong></div>
@@ -336,6 +464,29 @@ function playFailure() {
         </label>
       </div>
 
+      <div class="memory-visuals">
+        <figure class="image-result">
+          <div class="image-frame square-frame">
+            <img :src="selectedProduct.image" :alt="`${selectedProduct.name}原始图片`">
+            <span class="status-badge">原图</span>
+          </div>
+          <figcaption>
+            <strong>{{ originalWidth }} x {{ originalHeight }}</strong>
+            <span>{{ formattedOriginalMemory }}</span>
+          </figcaption>
+        </figure>
+        <figure class="image-result">
+          <div class="image-frame square-frame decoded-frame">
+            <canvas ref="decodedCanvas" aria-label="目标尺寸 Bitmap 放大预览"></canvas>
+            <span class="status-badge">解码后放大</span>
+          </div>
+          <figcaption>
+            <strong>{{ decodedWidth }} x {{ decodedHeight }}</strong>
+            <span>{{ formattedDecodedMemory }}</span>
+          </figcaption>
+        </figure>
+      </div>
+
       <div class="metrics-row">
         <div><span>原尺寸解码</span><strong>{{ formattedOriginalMemory }}</strong></div>
         <div><span>目标尺寸解码</span><strong>{{ formattedDecodedMemory }}</strong></div>
@@ -351,6 +502,16 @@ function playFailure() {
     </div>
 
     <div v-else-if="mode === 'race'" class="lab-content">
+      <div class="race-roles" aria-label="竞态请求身份">
+        <figure>
+          <img :src="products[0].image" alt="Request-A 森林背包">
+          <figcaption><strong>Request-A</strong><span>森林背包 · 2000 ms</span></figcaption>
+        </figure>
+        <figure>
+          <img :src="products[1].image" alt="Request-B 珊瑚耳机">
+          <figcaption><strong>Request-B</strong><span>珊瑚耳机 · 800 ms</span></figcaption>
+        </figure>
+      </div>
       <label class="switch-control">
         <input v-model="guardOldRequest" type="checkbox">
         <span>启用 Target 身份校验与旧请求清理</span>
@@ -358,6 +519,21 @@ function playFailure() {
       <div class="action-row">
         <button type="button" class="primary-action" @click="playRace">播放竞态时间线</button>
       </div>
+      <figure class="image-result race-target" :data-state="racePlayed ? (guardOldRequest ? 'safe' : 'wrong') : 'idle'">
+        <div class="image-frame">
+          <img :src="raceFinalProduct.image" :alt="`Target 当前显示${raceFinalProduct.name}`">
+          <span class="status-badge">
+            {{ racePlayed ? (guardOldRequest ? '正确结果' : '发生错位') : '黄色相机占位图' }}
+          </span>
+        </div>
+        <figcaption>
+          <strong>同一个 Target：{{ raceFinalProduct.name }}</strong>
+          <span v-if="racePlayed">
+            {{ guardOldRequest ? 'Request-A 晚到，但已失去所有权' : 'Request-A 晚到并覆盖了先显示的耳机' }}
+          </span>
+          <span v-else>播放前先预测最终图片。</span>
+        </figcaption>
+      </figure>
       <ol v-if="racePlayed" class="timeline">
         <li v-for="item in raceTimeline" :key="item.time">
           <time>{{ item.time }}</time>
@@ -386,6 +562,17 @@ function playFailure() {
       <div class="action-row">
         <button type="button" class="primary-action" @click="playFailure">执行失败请求</button>
       </div>
+      <figure class="image-result failure-preview" :data-state="failureVisual.state">
+        <div class="image-frame">
+          <img :src="selectedProduct.image" :alt="`${selectedProduct.name}失败实验画面`">
+          <span v-if="failurePlayed" class="failure-mark" aria-hidden="true">{{ failureVisual.state === 'error' ? '!' : '✓' }}</span>
+          <span class="status-badge">{{ failureVisual.status }}</span>
+        </div>
+        <figcaption>
+          <strong>{{ selectedProduct.name }}</strong>
+          <span>{{ failureVisual.detail }}</span>
+        </figcaption>
+      </figure>
       <ol v-if="failureStages.length" class="pipeline-flow">
         <li v-for="item in failureStages" :key="item.name" :data-state="item.state">
           <strong>{{ item.name }}</strong>
@@ -457,6 +644,47 @@ button:disabled {
   padding-top: 18px;
 }
 
+.product-picker {
+  display: grid;
+  grid-template-columns: auto repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  align-items: center;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--vp-c-divider);
+}
+
+.product-picker > span {
+  color: var(--vp-c-text-2);
+  font-size: 13px;
+}
+
+.product-picker button {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  padding: 5px;
+  text-align: left;
+}
+
+.product-picker button.selected {
+  border-color: var(--vp-c-brand-1);
+  background: var(--vp-c-bg-soft);
+}
+
+.product-picker img {
+  width: 42px;
+  height: 42px;
+  object-fit: cover;
+}
+
+.product-picker strong {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  font-weight: 500;
+}
+
 .controls-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -511,6 +739,168 @@ input[type='checkbox'] {
   border-color: var(--vp-c-brand-1);
   background: var(--vp-c-brand-1);
   color: var(--vp-c-white);
+}
+
+.image-result {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.35fr) minmax(180px, 1fr);
+  min-width: 0;
+  margin: 16px 0;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--vp-c-bg-soft);
+}
+
+.image-frame {
+  position: relative;
+  min-width: 0;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: var(--vp-c-bg-alt);
+}
+
+.image-frame > img,
+.image-frame > canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.image-result figcaption {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 16px;
+}
+
+.image-result figcaption strong,
+.image-result figcaption span {
+  display: block;
+}
+
+.image-result figcaption strong {
+  font-size: 16px;
+}
+
+.image-result figcaption span {
+  color: var(--vp-c-text-2);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.status-badge,
+.size-badge {
+  position: absolute;
+  z-index: 1;
+  padding: 4px 7px;
+  background: rgba(20, 24, 22, 0.82);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.status-badge {
+  top: 8px;
+  left: 8px;
+}
+
+.size-badge {
+  right: 8px;
+  bottom: 8px;
+}
+
+.memory-visuals {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.memory-visuals .image-result {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+
+.square-frame {
+  aspect-ratio: 1;
+}
+
+.decoded-frame canvas {
+  image-rendering: pixelated;
+}
+
+.race-roles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.race-roles figure {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--vp-c-divider);
+  background: var(--vp-c-bg-soft);
+}
+
+.race-roles img {
+  width: 88px;
+  height: 88px;
+  object-fit: cover;
+}
+
+.race-roles figcaption strong,
+.race-roles figcaption span {
+  display: block;
+}
+
+.race-roles figcaption span {
+  margin-top: 3px;
+  color: var(--vp-c-text-2);
+  font-size: 13px;
+}
+
+.race-target[data-state='safe'] {
+  border-color: var(--vp-c-green-1);
+}
+
+.race-target[data-state='wrong'] {
+  border-color: var(--vp-c-danger-1);
+}
+
+.failure-preview[data-state='error'] img {
+  filter: grayscale(0.7) brightness(0.45);
+}
+
+.failure-mark {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  width: 52px;
+  height: 52px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: rgba(179, 38, 30, 0.9);
+  color: #fff;
+  place-items: center;
+  font-size: 28px;
+  font-weight: 700;
+  transform: translate(-50%, -50%);
+}
+
+.failure-preview[data-state='success'] .failure-mark {
+  background: rgba(24, 121, 78, 0.9);
 }
 
 .metrics-row {
@@ -657,6 +1047,36 @@ input[type='checkbox'] {
 
   .timeline li {
     grid-template-columns: 64px minmax(0, 1fr);
+  }
+
+  .product-picker {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .product-picker > span {
+    grid-column: 1 / -1;
+  }
+
+  .product-picker button {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    text-align: center;
+  }
+
+  .product-picker img {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1;
+  }
+
+  .image-result {
+    grid-template-columns: 1fr;
+  }
+
+  .memory-visuals,
+  .race-roles {
+    grid-template-columns: 1fr;
   }
 }
 
