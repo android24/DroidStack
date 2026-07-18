@@ -2,6 +2,8 @@
 
 一行图片加载代码为什么能隐藏下载、缓存、解码、线程切换和 UI 更新？本节沿着一次真实请求向下追踪，直到每个核心角色都能放回调用链。
 
+> 开局预测：同一页面同时请求两次完全相同的图片时，是执行两次网络下载，还是两个调用者等待同一个任务？先写下答案，再阅读第 3.1.5 节验证。
+
 ## 3.1.1 先明确要追踪的请求
 
 Compose + Coil 的入口：
@@ -216,7 +218,46 @@ Composable 离开 / Fragment 销毁 / 新请求进入同一 ImageView
 
 “停止网络”只是取消的一部分。即使底层 I/O 不能立刻停下，结果回写前的有效性检查仍必须阻止旧结果污染新 UI。
 
-## 3.1.8 用一个最小加载器验证理解
+## 3.1.8 失败不是一个状态，而是一条分支链
+
+成功请求依次向前执行，失败请求则要回答“错误由谁产生、后续阶段是否继续、上层看见什么”。
+
+```text
+Request
+  -> Cache Miss
+  -> Fetcher
+       -> DNS / TLS / Timeout / HTTP Error ------> ErrorResult
+       -> Encoded Data
+            -> Decoder Factory
+                 -> Unsupported Format ----------> ErrorResult
+                 -> Decoder
+                      -> Corrupt Data ------------> ErrorResult
+                      -> Image
+                           -> Transformation
+                                -> Transform Error -> ErrorResult
+                                -> Target
+```
+
+| 错误 | 产生位置 | 后续行为 | 重试判断 |
+| --- | --- | --- | --- |
+| 断网、DNS、超时 | Fetcher / 网络组件 | 不进入 Decoder | 临时错误可有限重试 |
+| HTTP 401 / 404 | Fetcher / 网络组件 | 不进入 Decoder | 先修复鉴权或地址 |
+| HTTP 200 + 损坏字节 | Decoder | Fetch 成功但解码失败 | 防止重复读取污染缓存 |
+| 格式不支持 | Decoder Factory 选择 | 没有可用 Decoder | 注册组件或更换格式 |
+| Target 已失效 | 结果交付前 | 丢弃结果并释放资源 | 不属于业务失败，不重试 |
+
+重试不能放在任意一层。网络超时可以按次数和退避策略重试；404 通常不会因为立即重试而改变；解码失败也不能盲目重新下载同一份损坏内容。错误分类是重试策略的前提。
+
+完整 UI 状态还要区分：
+
+```text
+placeholder：请求进行中显示什么
+error：请求执行失败显示什么
+fallback：model 本身为空时显示什么
+cancelled：作用域结束，不应伪装成业务错误
+```
+
+## 3.1.9 用一个最小加载器验证理解
 
 下面是教学用伪代码，重点是角色与顺序，不是生产实现：
 
@@ -245,7 +286,7 @@ suspend fun execute(request: ImageRequest): ImageResult {
 
 阅读这段代码时要主动寻找缺失项：磁盘缓存应该缓存原始数据还是变换结果？失败如何分类？多个相同请求如何合并？资源谁来释放？这些问题正是成熟框架比教学 Demo 复杂的原因。
 
-## 3.1.9 本节检查点
+## 3.1.10 本节检查点
 
 读完后，尝试不看正文回答：
 
@@ -255,5 +296,15 @@ suspend fun execute(request: ImageRequest): ImageResult {
 4. 请求合并和内存缓存有什么本质区别？
 5. 一次取消要影响哪些阶段，为什么只取消网络还不够？
 
-[返回第三章总览](./index.md) | [继续：3.2 缓存系统与缓存 Key ->](./chapter3_2.md)
+<details>
+<summary>检查答案</summary>
 
+1. Request 还必须描述尺寸、变换、缓存策略、版本、目标和生命周期；
+2. Factory 选择或创建可处理当前输入的组件，Strategy 执行具体获取算法；
+3. `SingleRequest` 面向调用者状态，`EngineJob` 组织执行与分发，`DecodeJob` 完成缓存、获取和解码阶段；
+4. 请求合并共享尚未完成的任务，内存缓存复用已经生成的结果；
+5. 取消还要解除 Target、阻止旧结果回写、停止无消费者任务并正确释放资源。
+
+</details>
+
+[返回第三章总览](./index.md) | [进入 Demo：观察失败链](./chapter3_7.md#_3-7-6-挑战四-判断错误应该在哪里结束) | [继续：3.2 缓存系统与缓存 Key ->](./chapter3_2.md)

@@ -65,7 +65,7 @@ npm run docs:preview
 | --- | --- | --- | --- | --- |
 | 第一阶段：认识 Android 开源框架 | [第 1 章](./docs/chapter1/) | Android 开源框架全景 | 框架、库、组件、SDK 的区别；Android 开源生态演进；现代项目框架地图 | ✅ |
 | 第一阶段：认识 Android 开源框架 | [第 2 章](./docs/chapter2/) | 如何学习和评价一个开源框架 | README、Sample、模块结构、核心入口、调用链、Issue、社区活跃度与选型维度 | ✅ |
-| 第二阶段：数据获取与处理框架 | [第 3 章](./docs/chapter3/) | 图片加载框架 | 请求管线、缓存 Key、解码与内存、生命周期与资源回收、设计模式、源码追踪、选型与综合实验 | ✅ |
+| 第二阶段：数据获取与处理框架 | [第 3 章](./docs/chapter3/) | 图片加载框架 | 请求管线、缓存 Key、解码与内存、生命周期、设计模式、源码追踪、交互 Demo 与综合实验 | ✅ |
 | 第二阶段：数据获取与处理框架 | 第 4 章 | 网络请求底层框架 | OkHttp、HttpURLConnection、Volley、Ktor Client；连接池、拦截器、缓存、TLS、WebSocket | 🚧 |
 | 第二阶段：数据获取与处理框架 | 第 5 章 | 接口代理与网络处理框架 | Retrofit、动态代理、ServiceMethod、CallAdapter、Converter、统一错误处理 | 🚧 |
 | 第二阶段：数据获取与处理框架 | 第 6 章 | JSON 序列化与数据转换 | Kotlinx Serialization、Moshi、Gson、Jackson；反射、代码生成、泛型、多态与兼容性 | 🚧 |

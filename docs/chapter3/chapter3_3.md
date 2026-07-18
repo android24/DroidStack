@@ -2,6 +2,8 @@
 
 图片文件很小，不代表显示时占用内存也小。要理解图片 OOM，必须把“压缩文件大小”和“解码后的像素内存”彻底分开。
 
+> 开局预测：一张磁盘大小为 2 MB 的 `4000 x 3000` JPEG，以 ARGB_8888 完整解码后大约占多少内存？先估算，再到 [Bitmap 内存 Demo](./chapter3_7.md#_3-7-4-挑战二-把-45-8-mib-变成几十-kib) 验证。
+
 ## 3.3.1 200 KB 的 JPEG 为什么可能占几十 MB
 
 JPEG、PNG、WebP 是编码后的文件；ImageView 或 Compose 最终绘制的是解码后的像素。常见 Bitmap 内存近似为：
@@ -212,5 +214,15 @@ Bitmap Config
 4. Memory Cache 与 Bitmap Pool 的命中有什么区别？
 5. 为什么 Transformation 参数必须参与缓存 Key？
 
-[<- 上一节：3.2 缓存系统与缓存 Key](./chapter3_2.md) | [继续：3.4 生命周期、列表复用与资源回收 ->](./chapter3_4.md)
+<details>
+<summary>检查答案</summary>
 
+1. 文件是压缩编码，绘制使用解码后的像素；
+2. 解码、变换、旧结果和缓存可能在某一时刻同时存在；
+3. 稳定目标尺寸让框架在完整解码前采样，并提高资源复用概率；
+4. Memory Cache 直接返回完整结果，Bitmap Pool 只提供可复用像素内存，仍需解码；
+5. 参数不同会产生不同像素结果，若不进入 Key 就可能返回错误变体。
+
+</details>
+
+[<- 上一节：3.2 缓存系统与缓存 Key](./chapter3_2.md) | [进入 Bitmap 内存 Demo](./chapter3_7.md#_3-7-4-挑战二-把-45-8-mib-变成几十-kib) | [继续：3.4 生命周期、列表复用与资源回收 ->](./chapter3_4.md)

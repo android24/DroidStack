@@ -79,7 +79,8 @@ export default defineConfig({
               { text: '3.3 解码、尺寸与 Bitmap 内存', link: '/chapter3/chapter3_3' },
               { text: '3.4 生命周期、列表复用与回收', link: '/chapter3/chapter3_4' },
               { text: '3.5 设计模式与源码追踪', link: '/chapter3/chapter3_5' },
-              { text: '3.6 比较、选型与综合实验', link: '/chapter3/chapter3_6' }
+              { text: '3.6 比较、选型与综合实验', link: '/chapter3/chapter3_6' },
+              { text: '3.7 Image Pipeline Demo Lab', link: '/chapter3/chapter3_7' }
             ]
           },
           { text: '第4章：网络请求底层框架（建设中）' },

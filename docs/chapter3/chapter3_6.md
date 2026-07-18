@@ -145,6 +145,8 @@ fun ImageView.loadProductCover(product: Product) {
 
 最终实验不是再写一遍 `AsyncImage`，而是完成一个可观察、可故障注入的商品图片实验室。
 
+本节定义实验目标和验收标准；[第 3.7 节](./chapter3_7.md)提供可以立即操作的交互实验台、挑战答案和迁移到 Coil / Glide Android Demo 的实现入口。
+
 ### 功能要求
 
 1. 商品列表展示 100 条数据，图片尺寸固定；
@@ -239,4 +241,4 @@ Request 描述需求
 - [Glide Resource Reuse](https://bumptech.github.io/glide/doc/resourcereuse.html)
 - [Glide GitHub](https://github.com/bumptech/glide)
 
-[<- 上一节：3.5 设计模式与源码追踪](./chapter3_5.md) | [返回第三章总览](./index.md)
+[<- 上一节：3.5 设计模式与源码追踪](./chapter3_5.md) | [继续：3.7 Image Pipeline Demo Lab ->](./chapter3_7.md)

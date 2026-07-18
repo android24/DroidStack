@@ -132,7 +132,46 @@ LazyColumn {
 
 图片 painter / request 的执行应和 composition 作用域关联。Composable 离开、model 改变时，旧请求应停止影响当前 UI。不要在 composable 中另开一个无生命周期约束的全局协程下载 Bitmap 后直接回写状态。
 
-## 3.4.7 生命周期和取消不是同一个概念
+## 3.4.7 Coil 中请求身份与 painter 状态怎样协作
+
+Coil Compose 入口会把 `ImageRequest` 的执行结果映射为 painter 状态：
+
+```text
+model / request 改变
+  -> painter 判断是否需要开始新请求
+  -> 解析布局约束得到目标尺寸
+  -> ImageLoader 执行请求
+  -> Empty / Loading / Success / Error
+  -> Compose 根据 state 重组或绘制
+```
+
+这里有三种不同的“身份”，不能混为一谈：
+
+| 身份 | 解决的问题 |
+| --- | --- |
+| Lazy item key | 列表增删移动时，Compose 如何识别 item |
+| ImageRequest / model | painter 是否面对同一个请求输入 |
+| Memory / Disk Cache Key | 加载结果是否可以复用 |
+
+Lazy item key 稳定，不代表图片缓存一定命中；缓存 Key 相同，也不代表 composable 不会因为其他状态发生重组。
+
+当 model 变化或 composable 离开时，请求执行作用域应被取消。取消可能终止挂起的 Fetcher，也可能在底层操作无法立即停止时阻止结果继续交付。`onError` 表示执行失败，`onCancel` 表示请求被主动取消，两者在监控和重试策略中必须分开。
+
+### 一个容易制造重复请求的写法
+
+```kotlin
+AsyncImage(
+    model = ImageRequest.Builder(LocalContext.current)
+        .data(product.coverUrl)
+        .memoryCacheKey("${product.id}:${System.nanoTime()}")
+        .build(),
+    contentDescription = product.name
+)
+```
+
+随机 Key 让每次重组都拥有新缓存身份，稳定 URL 也无法复用结果。正确做法是用内容版本、目标尺寸和变换等真正影响结果的字段构建身份。
+
+## 3.4.8 生命周期和取消不是同一个概念
 
 生命周期提供“何时应该改变请求状态”的信号；取消是具体执行动作。
 
@@ -145,7 +184,7 @@ Lifecycle destroy（信号）
 
 框架还可能在 stop 时暂停请求，在 destroy 时彻底清理。暂停允许之后恢复，取消通常结束当前执行，两者语义不同。
 
-## 3.4.8 资源回收的核心是所有权
+## 3.4.9 资源回收的核心是所有权
 
 一张图片可能同时被两个 ImageView 显示，也可能仍在内存缓存中。框架不能在第一个 View 清理时就释放像素。
 
@@ -161,7 +200,7 @@ Target-B clear    -> 引用 -1
 
 实际实现细节以版本源码为准，但核心约束不变：只有确认没有消费者后，资源才可以安全复用。业务代码私自持有或 recycle 框架资源，会破坏这套所有权协议。
 
-## 3.4.9 加载状态也需要完整生命周期
+## 3.4.10 加载状态也需要完整生命周期
 
 图片不是只有成功状态：
 
@@ -184,7 +223,7 @@ UI 应为各状态定义行为：
 
 “页面已经销毁但还在回调”通常就是状态机与生命周期脱节。
 
-## 3.4.10 制造错位实验
+## 3.4.11 制造错位实验
 
 先写一个故意有问题的教学加载器：
 
@@ -231,7 +270,7 @@ whether result was delivered
 
 只有画出时间线，才能把“偶尔错图”还原成确定的竞态条件。
 
-## 3.4.11 本节检查点
+## 3.4.12 本节检查点
 
 1. 为什么旧请求即使不能立刻停止网络，也必须阻止结果回写？
 2. `.into(imageView)` 除了显示图片，还建立了什么关系？
@@ -239,4 +278,15 @@ whether result was delivered
 4. Compose 的 item key 与图片缓存 Key 有什么共同点和区别？
 5. 为什么框架管理的 Bitmap 不能由业务代码随意 recycle？
 
-[<- 上一节：3.3 解码、尺寸与 Bitmap 内存](./chapter3_3.md) | [继续：3.5 设计模式与源码追踪 ->](./chapter3_5.md)
+<details>
+<summary>检查答案</summary>
+
+1. 底层 I/O 即使不能立刻停止，失效请求也不能再拥有当前 Target；
+2. `.into()` 建立了 Request 与 Target 的所有权和清理关系；
+3. 复用 View 保留旧内容，无图分支也必须表达当前 item 的完整状态；
+4. 两者都解决身份问题，但 item key 服务 UI 组合，缓存 Key 服务结果复用；
+5. 框架还要跟踪 Target、缓存和 Pool 的引用，业务提前 recycle 会破坏所有权协议。
+
+</details>
+
+[<- 上一节：3.3 解码、尺寸与 Bitmap 内存](./chapter3_3.md) | [进入 Demo：制造图片错位](./chapter3_7.md#_3-7-5-挑战三-亲手制造一次图片错位) | [继续：3.5 设计模式与源码追踪 ->](./chapter3_5.md)
