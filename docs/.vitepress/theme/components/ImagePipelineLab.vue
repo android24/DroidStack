@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { withBase } from 'vitepress'
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 type Mode = 'cache' | 'memory' | 'race' | 'failure'
 type StageState = 'idle' | 'hit' | 'work' | 'skip' | 'error'
+type CachePhase = 'idle' | 'lookup' | 'fetching' | 'decoding' | 'success' | 'cancelled'
 
 interface Stage {
   name: string
@@ -51,6 +52,12 @@ const cacheResult = ref('尚未执行请求')
 const cacheSource = ref('-')
 const cacheDuration = ref(0)
 const cacheStages = ref<Stage[]>([])
+const cachePhase = ref<CachePhase>('idle')
+const cacheElapsed = ref(0)
+const cacheExpectedDuration = ref(0)
+const cachePendingSource = ref('-')
+let cacheClock: ReturnType<typeof setInterval> | undefined
+let cacheCompletion: ReturnType<typeof setTimeout> | undefined
 
 const originalWidth = ref(4000)
 const originalHeight = ref(3000)
@@ -62,6 +69,12 @@ const canvasReady = ref(false)
 
 const guardOldRequest = ref(false)
 const racePlayed = ref(false)
+const raceRunning = ref(false)
+const raceElapsed = ref(0)
+const raceStep = ref(-1)
+const raceGuardSnapshot = ref(false)
+let raceClock: ReturnType<typeof setInterval> | undefined
+let raceTimers: Array<ReturnType<typeof setTimeout>> = []
 
 const failureType = ref('http404')
 const retryEnabled = ref(false)
@@ -97,9 +110,71 @@ const cachePreviewStyle = computed(() => ({
   filter: transformation.value === 'blur-12' ? 'blur(5px)' : 'none'
 }))
 
+const isCacheRunning = computed(() =>
+  ['lookup', 'fetching', 'decoding'].includes(cachePhase.value)
+)
+
+const cacheProgress = computed(() => {
+  if (!isCacheRunning.value || cacheExpectedDuration.value <= 0) {
+    return cachePhase.value === 'success' ? 100 : 0
+  }
+  return Math.min(100, (cacheElapsed.value / cacheExpectedDuration.value) * 100)
+})
+
+const cacheStatusLabel = computed(() => {
+  const labels: Record<CachePhase, string> = {
+    idle: '占位图',
+    lookup: '查找缓存',
+    fetching: '网络加载中',
+    decoding: '解码中',
+    success: cacheSource.value,
+    cancelled: '已取消'
+  }
+  return labels[cachePhase.value]
+})
+
+const cacheLiveDetail = computed(() => {
+  if (cachePhase.value === 'fetching') {
+    return `图片仍未交付：${cacheElapsed.value} / ${cacheExpectedDuration.value} ms`
+  }
+  if (cachePhase.value === 'lookup') return `正在从 ${cachePendingSource.value} 读取资源`
+  if (cachePhase.value === 'decoding') return '已获得编码数据，正在生成目标尺寸 Bitmap'
+  return cacheResult.value
+})
+
 const raceFinalProduct = computed(() => {
   if (!racePlayed.value) return products[2]
-  return guardOldRequest.value ? products[1] : products[0]
+  if (raceStep.value === 0) return products[0]
+  if (raceStep.value === 1) return products[2]
+  if (raceStep.value === 2) return products[1]
+  return raceGuardSnapshot.value ? products[1] : products[0]
+})
+
+const raceTargetOwner = computed(() =>
+  !racePlayed.value
+    ? '尚未绑定列表项'
+    : raceStep.value >= 1
+      ? 'row-35 · 商品 B'
+      : 'row-12 · 商品 A'
+)
+
+const raceTargetStatus = computed(() => {
+  if (!racePlayed.value) return '等待播放'
+  if (raceStep.value === 0) return 'A 请求已启动'
+  if (raceStep.value === 1) return 'ImageView 已复用，等待 B'
+  if (raceStep.value === 2) return 'B 已正确显示'
+  return raceGuardSnapshot.value ? 'A 已取消，保持 B' : 'A 晚到并错误覆盖 B'
+})
+
+const raceAProgress = computed(() => {
+  if (!racePlayed.value) return 0
+  if (raceGuardSnapshot.value && raceElapsed.value >= 500) return (500 / 2400) * 100
+  return Math.min(100, (raceElapsed.value / 2400) * 100)
+})
+
+const raceBProgress = computed(() => {
+  if (raceElapsed.value < 500) return 0
+  return Math.min(100, ((raceElapsed.value - 500) / 700) * 100)
 })
 
 const failureVisual = computed(() => {
@@ -119,19 +194,24 @@ const failureVisual = computed(() => {
 })
 
 const raceTimeline = computed(() => {
-  const final = guardOldRequest.value ? '商品 B' : '商品 A（错位）'
+  const safe = racePlayed.value ? raceGuardSnapshot.value : guardOldRequest.value
   return [
-    { time: '0 ms', event: 'Target 绑定商品 A，Request-A 开始', owner: 'A' },
-    { time: '300 ms', event: 'Target 被复用给商品 B，Request-B 开始', owner: 'B' },
-    { time: '800 ms', event: 'Request-B 返回，显示商品 B', owner: 'B' },
+    { time: '0 ms', event: 'row-12 绑定背包，Request-A 开始', state: 'A' },
     {
-      time: '2000 ms',
-      event: guardOldRequest.value
-        ? 'Request-A 返回，但身份校验失败，结果被丢弃'
-        : 'Request-A 返回并覆盖 Target，发生错位',
-      owner: guardOldRequest.value ? 'B' : 'A'
+      time: '500 ms',
+      event: safe
+        ? '快速滚动：同一 ImageView 改绑 row-35，并取消 Request-A'
+        : '快速滚动：同一 ImageView 改绑 row-35，但 Request-A 仍在后台运行',
+      state: 'B'
     },
-    { time: '最终', event: `Target 显示：${final}`, owner: final }
+    { time: '1200 ms', event: 'Request-B 返回，耳机显示在 row-35', state: 'B' },
+    {
+      time: '2400 ms',
+      event: safe
+        ? 'Request-A 已取消，不再交付；row-35 保持耳机'
+        : 'Request-A 晚到，把 row-35 的耳机错误覆盖成背包',
+      state: safe ? 'safe' : 'wrong'
+    }
   ]
 })
 
@@ -199,17 +279,41 @@ function add(list: string[], key: string): string[] {
   return has(list, key) ? list : [...list, key]
 }
 
+function stopCacheTimers() {
+  if (cacheClock) clearInterval(cacheClock)
+  if (cacheCompletion) clearTimeout(cacheCompletion)
+  cacheClock = undefined
+  cacheCompletion = undefined
+}
+
+function resetCachePresentation(message: string) {
+  stopCacheTimers()
+  cachePhase.value = 'idle'
+  cacheElapsed.value = 0
+  cacheExpectedDuration.value = 0
+  cachePendingSource.value = '-'
+  cacheDuration.value = 0
+  cacheSource.value = '-'
+  cacheStages.value = []
+  cacheResult.value = message
+}
+
 function runCacheRequest() {
-  cacheRun.value += 1
+  if (isCacheRunning.value) return
+
   const currentResourceKey = resourceKey.value
   const currentDataKey = dataKey.value
   const decodeCost = Math.max(6, Math.round((targetSize.value * targetSize.value) / 6000))
+  let source = 'NETWORK'
+  let duration = latency.value + 360 + decodeCost
+  let result = '全部未命中，执行网络获取、解码和缓存写入'
+  let stages: Stage[] = []
 
   if (memoryCacheEnabled.value && has(memoryKeys.value, currentResourceKey)) {
-    cacheSource.value = 'MEMORY'
-    cacheDuration.value = 4
-    cacheResult.value = '命中完整资源，不再读取磁盘、网络和解码'
-    cacheStages.value = [
+    source = 'MEMORY'
+    duration = 180
+    result = '命中完整资源，不再读取磁盘、网络和解码'
+    stages = [
       stage('Size + Key', currentResourceKey, 'work'),
       stage('Memory', '命中', 'hit'),
       stage('Disk', '跳过', 'skip'),
@@ -217,15 +321,11 @@ function runCacheRequest() {
       stage('Decoder', '跳过', 'skip'),
       stage('Target', '交付结果', 'work')
     ]
-    return
-  }
-
-  if (diskCacheEnabled.value && has(resourceDiskKeys.value, currentResourceKey)) {
-    cacheSource.value = 'RESOURCE_DISK'
-    cacheDuration.value = 24
-    cacheResult.value = '命中已变换资源，读取磁盘后直接交付'
-    if (memoryCacheEnabled.value) memoryKeys.value = add(memoryKeys.value, currentResourceKey)
-    cacheStages.value = [
+  } else if (diskCacheEnabled.value && has(resourceDiskKeys.value, currentResourceKey)) {
+    source = 'RESOURCE_DISK'
+    duration = 520
+    result = '命中已变换资源，读取磁盘后直接交付'
+    stages = [
       stage('Size + Key', currentResourceKey, 'work'),
       stage('Memory', '未命中', 'skip'),
       stage('Resource Disk', '命中', 'hit'),
@@ -233,18 +333,11 @@ function runCacheRequest() {
       stage('Decoder', '跳过', 'skip'),
       stage('Target', '交付结果', 'work')
     ]
-    return
-  }
-
-  if (diskCacheEnabled.value && has(dataDiskKeys.value, currentDataKey)) {
-    cacheSource.value = 'DATA_DISK'
-    cacheDuration.value = 28 + decodeCost
-    cacheResult.value = '原始数据命中，但尺寸或变换不同，需要重新解码'
-    if (diskCacheEnabled.value) {
-      resourceDiskKeys.value = add(resourceDiskKeys.value, currentResourceKey)
-    }
-    if (memoryCacheEnabled.value) memoryKeys.value = add(memoryKeys.value, currentResourceKey)
-    cacheStages.value = [
+  } else if (diskCacheEnabled.value && has(dataDiskKeys.value, currentDataKey)) {
+    source = 'DATA_DISK'
+    duration = 680 + decodeCost
+    result = '原始数据命中，但尺寸或变换不同，需要重新解码'
+    stages = [
       stage('Size + Key', currentResourceKey, 'work'),
       stage('Memory', '未命中', 'skip'),
       stage('Resource Disk', '未命中', 'skip'),
@@ -252,54 +345,124 @@ function runCacheRequest() {
       stage('Decoder', `解码到 ${targetSize.value}px`, 'work'),
       stage('Target', '交付结果', 'work')
     ]
-    return
+  } else {
+    stages = [
+      stage('Size + Key', currentResourceKey, 'work'),
+      stage('Memory', '未命中', 'skip'),
+      stage('Resource Disk', '未命中', 'skip'),
+      stage('Data Disk', '未命中', 'skip'),
+      stage('Fetcher', `真实等待 ${latency.value} ms`, 'work'),
+      stage('Decoder', `解码到 ${targetSize.value}px`, 'work'),
+      stage('Target', '交付结果', 'work')
+    ]
   }
 
-  cacheSource.value = 'NETWORK'
-  cacheDuration.value = latency.value + 42 + decodeCost
-  cacheResult.value = '全部未命中，执行网络获取、解码和缓存写入'
-  if (diskCacheEnabled.value) {
-    dataDiskKeys.value = add(dataDiskKeys.value, currentDataKey)
-    resourceDiskKeys.value = add(resourceDiskKeys.value, currentResourceKey)
-  }
-  if (memoryCacheEnabled.value) memoryKeys.value = add(memoryKeys.value, currentResourceKey)
+  cacheRun.value += 1
+  cacheSource.value = '-'
+  cachePendingSource.value = source
+  cacheExpectedDuration.value = duration
+  cacheElapsed.value = 0
+  cacheDuration.value = 0
+  cacheResult.value = result
+  cacheStages.value = stages
+  cachePhase.value = source === 'NETWORK'
+    ? 'fetching'
+    : source === 'DATA_DISK'
+      ? 'decoding'
+      : 'lookup'
+
+  const startedAt = Date.now()
+  cacheClock = setInterval(() => {
+    cacheElapsed.value = Math.min(duration, Date.now() - startedAt)
+  }, 40)
+
+  cacheCompletion = setTimeout(() => {
+    stopCacheTimers()
+    cacheElapsed.value = duration
+    cacheDuration.value = duration
+    cacheSource.value = source
+    cachePhase.value = 'success'
+
+    if (source === 'NETWORK' && diskCacheEnabled.value) {
+      dataDiskKeys.value = add(dataDiskKeys.value, currentDataKey)
+      resourceDiskKeys.value = add(resourceDiskKeys.value, currentResourceKey)
+    }
+    if (source === 'DATA_DISK' && diskCacheEnabled.value) {
+      resourceDiskKeys.value = add(resourceDiskKeys.value, currentResourceKey)
+    }
+    if (memoryCacheEnabled.value) {
+      memoryKeys.value = add(memoryKeys.value, currentResourceKey)
+    }
+  }, duration)
+}
+
+function cancelCacheRequest() {
+  if (!isCacheRunning.value) return
+  stopCacheTimers()
+  cacheDuration.value = cacheElapsed.value
+  cacheSource.value = 'CANCELLED'
+  cachePhase.value = 'cancelled'
+  cacheResult.value = 'Target 离开页面，请求在图片交付前被取消，结果不会写入当前 Target'
   cacheStages.value = [
-    stage('Size + Key', currentResourceKey, 'work'),
-    stage('Memory', '未命中', 'skip'),
-    stage('Resource Disk', '未命中', 'skip'),
-    stage('Data Disk', '未命中', 'skip'),
-    stage('Fetcher', `网络 ${latency.value} ms`, 'work'),
-    stage('Decoder', `解码到 ${targetSize.value}px`, 'work'),
-    stage('Target', '交付结果', 'work')
+    ...cacheStages.value.filter((item) => item.name !== 'Target'),
+    stage('Cancel', `${cacheElapsed.value} ms 时取消`, 'error'),
+    stage('Target', '不交付旧结果', 'skip')
   ]
 }
 
 function clearMemory() {
+  if (isCacheRunning.value) return
   memoryKeys.value = []
-  cacheResult.value = '内存缓存已清空，磁盘缓存仍保留'
-  cacheSource.value = '-'
-  cacheStages.value = []
+  resetCachePresentation('内存缓存已清空，磁盘缓存仍保留')
 }
 
 function clearAllCaches() {
+  if (isCacheRunning.value) return
   memoryKeys.value = []
   dataDiskKeys.value = []
   resourceDiskKeys.value = []
-  cacheResult.value = '内存与磁盘缓存均已清空'
-  cacheSource.value = '-'
-  cacheStages.value = []
+  resetCachePresentation('内存与磁盘缓存均已清空')
 }
 
 function selectProduct(product: Product) {
+  if (isCacheRunning.value) return
   selectedProductId.value = product.id
-  cacheSource.value = '-'
-  cacheStages.value = []
-  cacheResult.value = `已切换为${product.name}，它拥有独立的数据 Key 与资源 Key`
+  resetCachePresentation(`已切换为${product.name}，它拥有独立的数据 Key 与资源 Key`)
   failurePlayed.value = false
 }
 
 function playRace() {
+  stopRaceTimers()
   racePlayed.value = true
+  raceRunning.value = true
+  raceElapsed.value = 0
+  raceStep.value = 0
+  raceGuardSnapshot.value = guardOldRequest.value
+  const startedAt = Date.now()
+
+  raceClock = setInterval(() => {
+    raceElapsed.value = Math.min(2400, Date.now() - startedAt)
+  }, 40)
+
+  raceTimers = [
+    setTimeout(() => { raceStep.value = 1 }, 500),
+    setTimeout(() => { raceStep.value = 2 }, 1200),
+    setTimeout(() => {
+      raceStep.value = 3
+      raceElapsed.value = 2400
+      raceRunning.value = false
+      if (raceClock) clearInterval(raceClock)
+      raceClock = undefined
+    }, 2400)
+  ]
+}
+
+function stopRaceTimers() {
+  if (raceClock) clearInterval(raceClock)
+  raceTimers.forEach((timer) => clearTimeout(timer))
+  raceClock = undefined
+  raceTimers = []
+  raceRunning.value = false
 }
 
 function playFailure() {
@@ -333,6 +496,16 @@ watch(
   [mode, selectedProductId, decodedWidth, decodedHeight],
   () => nextTick(renderDecodedCanvas)
 )
+
+watch(mode, () => {
+  if (mode.value !== 'cache' && isCacheRunning.value) cancelCacheRequest()
+  if (mode.value !== 'race' && raceRunning.value) stopRaceTimers()
+})
+
+onBeforeUnmount(() => {
+  stopCacheTimers()
+  stopRaceTimers()
+})
 </script>
 
 <template>
@@ -358,6 +531,7 @@ watch(
         v-for="product in products"
         :key="product.id"
         type="button"
+        :disabled="isCacheRunning"
         :aria-pressed="selectedProductId === product.id"
         :class="{ selected: selectedProductId === product.id }"
         @click="selectProduct(product)"
@@ -368,7 +542,7 @@ watch(
     </div>
 
     <div v-if="mode === 'cache'" class="lab-content">
-      <div class="controls-grid">
+      <fieldset class="controls-grid" :disabled="isCacheRunning">
         <label class="switch-control">
           <input v-model="memoryCacheEnabled" type="checkbox">
           <span>内存缓存</span>
@@ -405,37 +579,53 @@ watch(
         </label>
         <label>
           网络延迟：{{ latency }} ms
-          <input v-model="latency" type="range" min="0" max="3000" step="200">
+          <input v-model.number="latency" type="range" min="0" max="3000" step="200">
         </label>
-      </div>
+      </fieldset>
 
       <div class="action-row">
-        <button type="button" class="primary-action" @click="runCacheRequest">
+        <button v-if="!isCacheRunning" type="button" class="primary-action" @click="runCacheRequest">
           执行第 {{ cacheRun + 1 }} 次请求
         </button>
-        <button type="button" @click="clearMemory">杀进程效果</button>
-        <button type="button" @click="clearAllCaches">清空全部缓存</button>
+        <button v-else type="button" class="cancel-action" @click="cancelCacheRequest">
+          取消当前请求
+        </button>
+        <button type="button" :disabled="isCacheRunning" @click="clearMemory">杀进程效果</button>
+        <button type="button" :disabled="isCacheRunning" @click="clearAllCaches">清空全部缓存</button>
       </div>
 
-      <figure class="image-result cache-preview">
-        <div class="image-frame">
+      <figure class="image-result cache-preview" :data-phase="cachePhase">
+        <div class="image-frame cache-image-frame">
           <img
             :src="selectedProduct.image"
             :alt="`${selectedProduct.name}缓存实验结果`"
             :style="cachePreviewStyle"
+            class="preview-image"
+            :class="{ 'is-ready': cachePhase === 'success' }"
           >
-          <span class="status-badge">{{ cacheSource === '-' ? '等待请求' : cacheSource }}</span>
+          <div v-if="cachePhase !== 'success'" class="loading-visual" aria-live="polite">
+            <span v-if="isCacheRunning" class="loading-spinner" aria-hidden="true"></span>
+            <strong>{{ cacheStatusLabel }}</strong>
+            <span v-if="isCacheRunning">{{ cacheElapsed }} ms</span>
+          </div>
+          <span class="status-badge">{{ cacheStatusLabel }}</span>
           <span class="size-badge">{{ targetSize }} px · {{ transformation }}</span>
+          <div v-if="isCacheRunning" class="transfer-progress" aria-hidden="true">
+            <span :style="{ width: `${cacheProgress}%` }"></span>
+          </div>
         </div>
         <figcaption>
           <strong>{{ selectedProduct.name }}</strong>
-          <span>{{ cacheResult }}</span>
+          <span>{{ cacheLiveDetail }}</span>
+          <span v-if="cachePendingSource === 'NETWORK' && isCacheRunning" class="latency-note">
+            调高“网络延迟”后，占位图会保持更久，清晰图片只在请求完成后出现。
+          </span>
         </figcaption>
       </figure>
 
       <div class="metrics-row" aria-live="polite">
         <div><span>数据来源</span><strong>{{ cacheSource }}</strong></div>
-        <div><span>模拟耗时</span><strong>{{ cacheDuration }} ms</strong></div>
+        <div><span>{{ isCacheRunning ? '已等待' : '实际等待' }}</span><strong>{{ isCacheRunning ? cacheElapsed : cacheDuration }} ms</strong></div>
         <div><span>资源 Key</span><strong>{{ resourceKey }}</strong></div>
       </div>
 
@@ -502,45 +692,82 @@ watch(
     </div>
 
     <div v-else-if="mode === 'race'" class="lab-content">
-      <div class="race-roles" aria-label="竞态请求身份">
-        <figure>
-          <img :src="products[0].image" alt="Request-A 森林背包">
-          <figcaption><strong>Request-A</strong><span>森林背包 · 2000 ms</span></figcaption>
-        </figure>
-        <figure>
-          <img :src="products[1].image" alt="Request-B 珊瑚耳机">
-          <figcaption><strong>Request-B</strong><span>珊瑚耳机 · 800 ms</span></figcaption>
-        </figure>
+      <div class="race-explainer">
+        <strong>场景：快速滚动让同一个 ImageView 被复用</strong>
+        <span>它先属于 row-12 的背包，500 ms 后改为 row-35 的耳机。问题不是谁先请求，而是谁在回调发生时仍然拥有这个 Target。</span>
       </div>
-      <label class="switch-control">
-        <input v-model="guardOldRequest" type="checkbox">
-        <span>启用 Target 身份校验与旧请求清理</span>
+
+      <div class="race-stage" :data-state="racePlayed ? (raceStep >= 3 ? (raceGuardSnapshot ? 'safe' : 'wrong') : 'running') : 'idle'">
+        <div class="phone-list" aria-label="被复用的列表图片槽位">
+          <div class="phone-bar"><span></span><span></span><span></span></div>
+          <div class="list-row faded-row"><i></i><span></span><span></span></div>
+          <div class="list-row active-row">
+            <div class="reused-target">
+              <img :src="raceFinalProduct.image" :alt="`复用后的 ImageView 当前显示${raceFinalProduct.name}`">
+              <span>同一个 ImageView</span>
+            </div>
+            <div class="row-copy">
+              <strong>{{ raceTargetOwner }}</strong>
+              <span>{{ raceTargetStatus }}</span>
+            </div>
+          </div>
+          <div class="list-row faded-row"><i></i><span></span><span></span></div>
+        </div>
+
+        <div class="request-lanes" aria-label="两个异步请求的执行进度">
+          <div class="request-lane lane-a" :data-cancelled="raceGuardSnapshot && raceElapsed >= 500">
+            <div class="lane-head">
+              <img :src="products[0].image" alt="Request-A 森林背包">
+              <span><strong>Request-A</strong><small>背包 · 慢请求 2400 ms</small></span>
+            </div>
+            <div class="lane-track"><span :style="{ width: `${raceAProgress}%` }"></span></div>
+            <em v-if="raceGuardSnapshot && raceElapsed >= 500">Target 复用时已取消</em>
+            <em v-else-if="raceElapsed >= 2400">{{ raceGuardSnapshot ? '未交付' : '晚到并交付' }}</em>
+            <em v-else>{{ Math.min(raceElapsed, 2400) }} / 2400 ms</em>
+          </div>
+          <div class="request-lane lane-b">
+            <div class="lane-head">
+              <img :src="products[1].image" alt="Request-B 珊瑚耳机">
+              <span><strong>Request-B</strong><small>耳机 · 500 ms 时发起，700 ms 后返回</small></span>
+            </div>
+            <div class="lane-track"><span :style="{ width: `${raceBProgress}%` }"></span></div>
+            <em v-if="raceElapsed < 500">尚未发起</em>
+            <em v-else-if="raceElapsed < 1200">{{ raceElapsed - 500 }} / 700 ms</em>
+            <em v-else>已返回并交付耳机</em>
+          </div>
+        </div>
+      </div>
+
+      <label class="switch-control race-guard">
+        <input v-model="guardOldRequest" type="checkbox" :disabled="raceRunning">
+        <span>安全模式：Target 复用时取消 Request-A</span>
       </label>
       <div class="action-row">
-        <button type="button" class="primary-action" @click="playRace">播放竞态时间线</button>
+        <button type="button" class="primary-action" :disabled="raceRunning" @click="playRace">
+          {{ racePlayed ? '重新播放' : '播放滚动与回调' }}
+        </button>
       </div>
-      <figure class="image-result race-target" :data-state="racePlayed ? (guardOldRequest ? 'safe' : 'wrong') : 'idle'">
-        <div class="image-frame">
-          <img :src="raceFinalProduct.image" :alt="`Target 当前显示${raceFinalProduct.name}`">
-          <span class="status-badge">
-            {{ racePlayed ? (guardOldRequest ? '正确结果' : '发生错位') : '黄色相机占位图' }}
-          </span>
-        </div>
-        <figcaption>
-          <strong>同一个 Target：{{ raceFinalProduct.name }}</strong>
-          <span v-if="racePlayed">
-            {{ guardOldRequest ? 'Request-A 晚到，但已失去所有权' : 'Request-A 晚到并覆盖了先显示的耳机' }}
-          </span>
-          <span v-else>播放前先预测最终图片。</span>
-        </figcaption>
-      </figure>
-      <ol v-if="racePlayed" class="timeline">
-        <li v-for="item in raceTimeline" :key="item.time">
+
+      <ol class="timeline race-timeline">
+        <li
+          v-for="(item, index) in raceTimeline"
+          :key="item.time"
+          :data-active="racePlayed && index <= raceStep"
+          :data-current="racePlayed && index === raceStep"
+        >
           <time>{{ item.time }}</time>
           <span>{{ item.event }}</span>
         </li>
       </ol>
-      <p v-else class="empty-state">先预测最终会显示 A 还是 B，再播放时间线。</p>
+      <p class="race-verdict" :data-state="racePlayed && raceStep >= 3 ? (raceGuardSnapshot ? 'safe' : 'wrong') : 'pending'">
+        <strong v-if="!racePlayed">先预测：</strong>
+        <strong v-else-if="raceStep < 3">播放中：</strong>
+        <strong v-else>{{ raceGuardSnapshot ? '正确：' : '错位：' }}</strong>
+        <span v-if="!racePlayed">row-35 最后应该显示耳机。旧的背包请求还能不能修改它？</span>
+        <span v-else-if="raceStep < 3">观察 Target 的所有者和两条请求的返回顺序。</span>
+        <span v-else-if="raceGuardSnapshot">ImageView 已属于 B，A 被取消，因此耳机保持不变。</span>
+        <span v-else>ImageView 已属于 B，但旧请求 A 仍写入同一个控件，所以耳机被背包覆盖。</span>
+      </p>
     </div>
 
     <div v-else class="lab-content">
@@ -689,6 +916,10 @@ button:disabled {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px 18px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
 
 .controls-grid label,
@@ -705,6 +936,10 @@ button:disabled {
   align-items: center;
   align-self: end;
   min-height: 38px;
+}
+
+.controls-grid .switch-control {
+  flex-direction: row;
 }
 
 select,
@@ -741,6 +976,11 @@ input[type='checkbox'] {
   color: var(--vp-c-white);
 }
 
+.cancel-action {
+  border-color: var(--vp-c-danger-1);
+  color: var(--vp-c-danger-1);
+}
+
 .image-result {
   display: grid;
   grid-template-columns: minmax(220px, 1.35fr) minmax(180px, 1fr);
@@ -766,6 +1006,69 @@ input[type='checkbox'] {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.cache-image-frame .preview-image {
+  transition: filter 220ms ease, opacity 220ms ease, transform 220ms ease;
+}
+
+.cache-image-frame .preview-image:not(.is-ready) {
+  filter: blur(18px) brightness(0.42) !important;
+  opacity: 0.72;
+  transform: scale(1.08);
+}
+
+.loading-visual {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 8px;
+  color: #fff;
+  text-align: center;
+}
+
+.loading-visual strong,
+.loading-visual span {
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+
+.loading-spinner {
+  width: 30px;
+  height: 30px;
+  border: 3px solid rgba(255, 255, 255, 0.34);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: pipeline-spin 700ms linear infinite;
+}
+
+.transfer-progress {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.transfer-progress span {
+  display: block;
+  height: 100%;
+  background: #55c48f;
+  transition: width 40ms linear;
+}
+
+.latency-note {
+  padding-top: 8px;
+  border-top: 1px solid var(--vp-c-divider);
+  color: var(--vp-c-text-1) !important;
+}
+
+@keyframes pipeline-spin {
+  to { transform: rotate(360deg); }
 }
 
 .image-result figcaption {
@@ -834,48 +1137,204 @@ input[type='checkbox'] {
   image-rendering: pixelated;
 }
 
-.race-roles {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 16px;
+.race-explainer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 14px;
+  padding-left: 12px;
+  border-left: 3px solid var(--vp-c-brand-1);
 }
 
-.race-roles figure {
-  display: grid;
-  grid-template-columns: 88px minmax(0, 1fr);
-  gap: 10px;
-  align-items: center;
-  min-width: 0;
-  margin: 0;
-  padding: 8px;
-  border: 1px solid var(--vp-c-divider);
-  background: var(--vp-c-bg-soft);
-}
-
-.race-roles img {
-  width: 88px;
-  height: 88px;
-  object-fit: cover;
-}
-
-.race-roles figcaption strong,
-.race-roles figcaption span {
-  display: block;
-}
-
-.race-roles figcaption span {
-  margin-top: 3px;
+.race-explainer span {
   color: var(--vp-c-text-2);
   font-size: 13px;
 }
 
-.race-target[data-state='safe'] {
+.race-stage {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.82fr) minmax(300px, 1.4fr);
+  gap: 16px;
+  padding: 14px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 6px;
+  background: var(--vp-c-bg-soft);
+}
+
+.race-stage[data-state='wrong'] {
+  border-color: var(--vp-c-danger-1);
+}
+
+.race-stage[data-state='safe'] {
   border-color: var(--vp-c-green-1);
 }
 
-.race-target[data-state='wrong'] {
-  border-color: var(--vp-c-danger-1);
+.phone-list {
+  overflow: hidden;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 6px;
+  background: var(--vp-c-bg);
+}
+
+.phone-bar {
+  display: flex;
+  gap: 4px;
+  padding: 7px;
+  border-bottom: 1px solid var(--vp-c-divider);
+}
+
+.phone-bar span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--vp-c-text-3);
+}
+
+.list-row {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 10px;
+  min-height: 76px;
+  padding: 8px;
+  border-bottom: 1px solid var(--vp-c-divider);
+}
+
+.list-row:last-child {
+  border-bottom: 0;
+}
+
+.active-row {
+  background: color-mix(in srgb, var(--vp-c-brand-1) 8%, transparent);
+}
+
+.reused-target {
+  position: relative;
+  width: 76px;
+  height: 76px;
+  overflow: hidden;
+  border: 2px solid var(--vp-c-brand-1);
+  background: var(--vp-c-bg-alt);
+}
+
+.reused-target img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.reused-target span {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  padding: 2px;
+  background: rgba(20, 24, 22, 0.8);
+  color: #fff;
+  font-size: 9px;
+  text-align: center;
+}
+
+.row-copy {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+
+.row-copy span {
+  margin-top: 4px;
+  color: var(--vp-c-text-2);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.faded-row {
+  grid-template-columns: 58px minmax(0, 1fr);
+  min-height: 58px;
+  opacity: 0.38;
+}
+
+.faded-row i,
+.faded-row span {
+  display: block;
+  border-radius: 3px;
+  background: var(--vp-c-divider);
+}
+
+.faded-row span:last-child {
+  align-self: center;
+  width: 60%;
+  height: 8px;
+}
+
+.request-lanes {
+  display: grid;
+  align-content: center;
+  gap: 18px;
+  min-width: 0;
+}
+
+.request-lane {
+  min-width: 0;
+  padding: 10px;
+  border-left: 3px solid var(--vp-c-brand-1);
+  background: var(--vp-c-bg);
+}
+
+.request-lane[data-cancelled='true'] {
+  border-left-color: var(--vp-c-text-3);
+  opacity: 0.64;
+}
+
+.lane-head {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+}
+
+.lane-head img {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+}
+
+.lane-head strong,
+.lane-head small {
+  display: block;
+}
+
+.lane-head small,
+.request-lane em {
+  color: var(--vp-c-text-2);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.lane-track {
+  height: 7px;
+  margin: 10px 0 5px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--vp-c-divider);
+}
+
+.lane-track span {
+  display: block;
+  height: 100%;
+  background: var(--vp-c-brand-1);
+  transition: width 40ms linear;
+}
+
+.lane-b {
+  border-left-color: #55c48f;
+}
+
+.lane-b .lane-track span {
+  background: #55c48f;
+}
+
+.race-guard {
+  margin-top: 14px;
 }
 
 .failure-preview[data-state='error'] img {
@@ -1029,6 +1488,36 @@ input[type='checkbox'] {
   font-variant-numeric: tabular-nums;
 }
 
+.race-timeline li {
+  opacity: 0.42;
+  transition: opacity 160ms ease, background 160ms ease;
+}
+
+.race-timeline li[data-active='true'] {
+  opacity: 1;
+}
+
+.race-timeline li[data-current='true'] {
+  background: var(--vp-c-bg-soft);
+}
+
+.race-verdict {
+  display: flex;
+  gap: 6px;
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--vp-c-divider);
+  background: var(--vp-c-bg-soft);
+}
+
+.race-verdict[data-state='safe'] {
+  border-left-color: var(--vp-c-green-1);
+}
+
+.race-verdict[data-state='wrong'] {
+  border-left-color: var(--vp-c-danger-1);
+}
+
 .failure-controls {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -1075,14 +1564,22 @@ input[type='checkbox'] {
   }
 
   .memory-visuals,
-  .race-roles {
+  .race-stage {
     grid-template-columns: 1fr;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .memory-bar span {
+  .memory-bar span,
+  .cache-image-frame .preview-image,
+  .transfer-progress span,
+  .lane-track span,
+  .race-timeline li {
     transition: none;
+  }
+
+  .loading-spinner {
+    animation: none;
   }
 }
 </style>
