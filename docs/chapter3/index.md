@@ -45,7 +45,7 @@ Fragment 已经销毁，旧请求仍尝试更新 ImageView
 | [3.4 生命周期、列表复用与资源回收](./chapter3_4.md) | 从异步竞态到资源所有权 | 图片为什么错位、请求如何绑定 Target、资源何时能够复用 |
 | [3.5 设计模式与源码追踪](./chapter3_5.md) | 从模式名称到运行时协作 | 每个模式改变了哪一段流程、源码应该在哪里下断点 |
 | [3.6 框架比较、工程选型与综合实验](./chapter3_6.md) | 从理解到决策 | Coil、Glide、Picasso、Fresco 如何选择，怎样证明选择合理 |
-| [3.7 Image Pipeline Demo Lab](./chapter3_7.md) | 从阅读到操作 | 交互验证缓存、内存、列表竞态和失败链，再迁移到 Android 实机 |
+| [3.7 Image Pipeline Demo Lab](./chapter3_7.md) | 从阅读到操作 | 交互验证缓存、内存、列表竞态和失败链，再运行配套 Android Demo |
 
 ## 贯穿案例
 
@@ -90,6 +90,7 @@ data class Product(
 - 想读 Coil / Glide 源码：[3.5 设计模式与源码追踪](./chapter3_5.md)
 - 需要做框架选型：[3.6 框架比较、工程选型与综合实验](./chapter3_6.md)
 - 想直接动手验证：[3.7 Image Pipeline Demo Lab](./chapter3_7.md)
+- 想运行 Android 源码：[第三章 Demo 工程](https://github.com/android24/DroidStack/tree/main/demo/chapter03-image-pipeline)
 
 > 版本说明：本章以 Coil 3.x 和 Glide 5.x 的公开 API 与稳定架构概念为背景。框架内部类和调用细节可能随版本调整，阅读源码时应以项目锁定版本的 tag 为准；课程关注的是可迁移的分析方法，而不是背诵某一版类名。
 

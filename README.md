@@ -57,6 +57,17 @@ npm run docs:build
 npm run docs:preview
 ```
 
+## 章节 Demo
+
+课程示例统一放在 [`demo/`](./demo/) 目录，并作为独立 Android Gradle 工程维护。用 Android Studio 打开 `demo/`，或执行：
+
+```bash
+cd demo
+./gradlew :chapter03-image-pipeline:assembleDebug
+```
+
+每章 Demo 使用 `chapterNN-topic-name` 命名。目前已接入[第 3 章 Image Pipeline Lab](./demo/chapter03-image-pipeline/)，后续章节按同一结构新增模块。
+
 ## 课程目录
 
 课程规划为 5 个阶段、18 个章节，建议按阶段循序学习。

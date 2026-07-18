@@ -4,7 +4,7 @@ import ImagePipelineLab from '../.vitepress/theme/components/ImagePipelineLab.vu
 
 # 第 3.7 节：Image Pipeline Demo Lab
 
-前六节负责建立原理，第 3.7 节负责把判断变成可观察结果。这里先用交互模拟器快速验证缓存、解码、列表竞态和失败链，再把同一组实验迁移到 Coil 或 Glide 的 Android Demo。
+前六节负责建立原理，第 3.7 节负责把判断变成可观察结果。这里先用交互模拟器快速验证缓存、解码、列表竞态和失败链，再到主工程 [`demo/chapter03-image-pipeline`](https://github.com/android24/DroidStack/tree/main/demo/chapter03-image-pipeline) 运行 Coil、Glide 和竞态复现源码。
 
 ## 3.7.1 实验规则：先预测，再执行
 
@@ -144,7 +144,14 @@ Lifecycle Result
 
 ## 3.7.7 把模拟实验迁移到 Android
 
-交互模拟器提供的是模型，Android Demo 要提供真实证据。建议建立一个 Compose 页面，使用 Coil 作为默认实现，再增加 Glide + View 页面做对照。
+交互模拟器提供的是模型，Android Demo 要提供真实证据。配套源码位于 [`demo/chapter03-image-pipeline`](https://github.com/android24/DroidStack/tree/main/demo/chapter03-image-pipeline)，包含 Coil Lab、Glide Lab 和 Race Lab 三个入口。Demo 内置背包、耳机和相机三张图片：它们同时充当本地资源、网络模型的视觉参照、请求占位图与竞态结果，因此每次修改缓存 Key、目标尺寸或 Scale 都能直接从画面得到反馈。
+
+```bash
+cd demo
+./gradlew :chapter03-image-pipeline:assembleDebug
+```
+
+下面的状态和事件模型同时也是继续扩展 Demo 时的约定。
 
 ### 页面状态
 
