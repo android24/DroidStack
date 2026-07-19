@@ -2,7 +2,7 @@
 import { withBase } from 'vitepress'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
-type Mode = 'cache' | 'memory' | 'race' | 'failure'
+type Mode = 'cache' | 'memory' | 'race' | 'failure' | 'pattern'
 type StageState = 'idle' | 'hit' | 'work' | 'skip' | 'error'
 type CachePhase = 'idle' | 'lookup' | 'fetching' | 'decoding' | 'success' | 'cancelled'
 
@@ -16,6 +16,18 @@ interface Product {
   id: string
   name: string
   image: string
+}
+
+interface PatternNode {
+  id: string
+  label: string
+  responsibility: string
+  pattern: string
+  category: string
+  isolatedChange: string
+  coil: string
+  glide: string
+  verification: string
 }
 
 const products: Product[] = [
@@ -79,6 +91,80 @@ let raceTimers: Array<ReturnType<typeof setTimeout>> = []
 const failureType = ref('http404')
 const retryEnabled = ref(false)
 const failurePlayed = ref(false)
+
+const patternNodes: PatternNode[] = [
+  {
+    id: 'request',
+    label: 'Request',
+    responsibility: '收集 data、尺寸、变换、缓存策略和生命周期信息，并冻结为一次稳定请求。',
+    pattern: 'Builder',
+    category: '创建型模式',
+    isolatedChange: '隔离可选参数的组合、默认值合并和构建前校验。',
+    coil: 'ImageRequest.Builder -> ImageRequest',
+    glide: 'RequestBuilder + RequestOptions',
+    verification: '修改 size 或 transformation，观察构建后的请求快照与缓存 Key 是否同步变化。'
+  },
+  {
+    id: 'lifecycle',
+    label: 'Scope',
+    responsibility: '决定请求何时开始、暂停、取消，以及结果是否仍允许交付。',
+    pattern: '生命周期所有权',
+    category: '架构机制，不强行归入 GoF',
+    isolatedChange: '隔离页面存活状态与后台工作的取消传播。',
+    coil: 'ImageLoader.enqueue / Disposable / Compose painter state',
+    glide: 'RequestManagerRetriever -> RequestManager',
+    verification: '请求未完成时离开页面，观察执行任务是否取消、Target 是否停止接收结果。'
+  },
+  {
+    id: 'chain',
+    label: 'Chain',
+    responsibility: '让请求依次经过多个处理节点，并允许某一节点修改、短路或继续执行。',
+    pattern: 'Chain of Responsibility',
+    category: '行为型模式',
+    isolatedChange: '隔离日志、缓存、尺寸和执行策略等横向处理步骤。',
+    coil: 'RealInterceptorChain -> Interceptor -> proceed()',
+    glide: '多阶段 Engine / DecodeJob 流程，但不等同于 Interceptor Chain',
+    verification: '在 Coil Interceptor 前后记录请求；不调用 proceed()，验证责任链在当前节点短路。'
+  },
+  {
+    id: 'fetch',
+    label: 'Fetch',
+    responsibility: '根据 URL、文件、资源或业务模型选择数据获取实现，并返回编码数据。',
+    pattern: 'Factory + Strategy',
+    category: '创建型 + 行为型模式',
+    isolatedChange: '隔离数据模型匹配、组件创建与具体获取算法。',
+    coil: 'Fetcher.Factory 选择 Fetcher',
+    glide: 'ModelLoaderFactory / ModelLoader -> DataFetcher',
+    verification: '同一页面分别加载 drawable 和 HTTPS URL，记录最终选择的 Fetcher / DataFetcher。'
+  },
+  {
+    id: 'decode',
+    label: 'Decode',
+    responsibility: '识别输入格式，按目标尺寸把编码数据转换成可显示资源。',
+    pattern: 'Factory + Strategy',
+    category: '创建型 + 行为型模式',
+    isolatedChange: '隔离格式探测、Decoder 选择和不同像素生成算法。',
+    coil: 'Decoder.Factory 选择 Decoder',
+    glide: 'Registry 选择 ResourceDecoder',
+    verification: '分别输入 JPEG 与不支持格式，在组件选择处观察命中哪个 Decoder 或为何没有候选。'
+  },
+  {
+    id: 'target',
+    label: 'Target',
+    responsibility: '保存请求身份、接收状态与结果，并决定是否还能更新当前 UI。',
+    pattern: 'Observer + State Machine',
+    category: '行为模式与状态约束',
+    isolatedChange: '隔离异步结果通知、合法状态迁移和 UI 交付方式。',
+    coil: 'EventListener / ImageResult / AsyncImagePainter.State',
+    glide: 'SingleRequest state -> Target / RequestListener',
+    verification: '复用同一 ImageView 后让旧请求晚到，检查请求身份与状态为何阻止旧结果交付。'
+  }
+]
+
+const selectedPatternId = ref(patternNodes[0].id)
+const selectedPattern = computed(
+  () => patternNodes.find((node) => node.id === selectedPatternId.value) ?? patternNodes[0]
+)
 
 const selectedProduct = computed(
   () => products.find((product) => product.id === selectedProductId.value) ?? products[0]
@@ -488,6 +574,10 @@ function renderDecodedCanvas() {
 }
 
 onMounted(() => {
+  const requestedMode = new URLSearchParams(window.location.search).get('lab')
+  if (['cache', 'memory', 'race', 'failure', 'pattern'].includes(requestedMode ?? '')) {
+    mode.value = requestedMode as Mode
+  }
   canvasReady.value = true
   renderDecodedCanvas()
 })
@@ -523,9 +613,12 @@ onBeforeUnmount(() => {
       <button type="button" role="tab" :aria-selected="mode === 'failure'" :class="{ active: mode === 'failure' }" @click="mode = 'failure'">
         失败链
       </button>
+      <button type="button" role="tab" :aria-selected="mode === 'pattern'" :class="{ active: mode === 'pattern' }" @click="mode = 'pattern'">
+        设计模式
+      </button>
     </div>
 
-    <div v-if="mode !== 'race'" class="product-picker" aria-label="选择实验图片">
+    <div v-if="mode !== 'race' && mode !== 'pattern'" class="product-picker" aria-label="选择实验图片">
       <span>实验图片</span>
       <button
         v-for="product in products"
@@ -770,7 +863,7 @@ onBeforeUnmount(() => {
       </p>
     </div>
 
-    <div v-else class="lab-content">
+    <div v-else-if="mode === 'failure'" class="lab-content">
       <div class="controls-grid failure-controls">
         <label>
           注入故障
@@ -807,6 +900,63 @@ onBeforeUnmount(() => {
         </li>
       </ol>
       <p v-else class="empty-state">选择故障后执行，观察错误在哪个阶段产生、后续阶段是否跳过。</p>
+    </div>
+
+    <div v-else class="lab-content pattern-lab">
+      <div class="pattern-scene">
+        <figure class="pattern-product">
+          <img :src="selectedProduct.image" :alt="`${selectedProduct.name}设计模式实验图片`">
+          <figcaption>
+            <strong>同一张商品图</strong>
+            <span>点击一次请求中的不同阶段</span>
+          </figcaption>
+        </figure>
+
+        <ol class="pattern-flow" aria-label="图片请求设计模式管线">
+          <li v-for="node in patternNodes" :key="node.id">
+            <button
+              type="button"
+              :aria-pressed="selectedPatternId === node.id"
+              :class="{ selected: selectedPatternId === node.id }"
+              @click="selectedPatternId = node.id"
+            >
+              <strong>{{ node.label }}</strong>
+              <span>{{ node.pattern }}</span>
+            </button>
+          </li>
+        </ol>
+      </div>
+
+      <section class="pattern-inspector" aria-live="polite">
+        <header>
+          <span>{{ selectedPattern.category }}</span>
+          <h3>{{ selectedPattern.label }} · {{ selectedPattern.pattern }}</h3>
+          <p>{{ selectedPattern.responsibility }}</p>
+        </header>
+
+        <dl>
+          <div>
+            <dt>隔离的变化</dt>
+            <dd>{{ selectedPattern.isolatedChange }}</dd>
+          </div>
+          <div>
+            <dt>Coil</dt>
+            <dd><code>{{ selectedPattern.coil }}</code></dd>
+          </div>
+          <div>
+            <dt>Glide</dt>
+            <dd><code>{{ selectedPattern.glide }}</code></dd>
+          </div>
+          <div class="verification-row">
+            <dt>源码验证点</dt>
+            <dd>{{ selectedPattern.verification }}</dd>
+          </div>
+        </dl>
+      </section>
+
+      <p class="pattern-warning">
+        判断顺序：先找变化，再看对象如何协作，最后才给模式命名。框架没有义务完全照搬教科书结构。
+      </p>
     </div>
   </section>
 </template>
@@ -1522,6 +1672,142 @@ input[type='checkbox'] {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.pattern-scene {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.pattern-product {
+  margin: 0;
+  min-width: 0;
+  background: var(--vp-c-bg-soft);
+}
+
+.pattern-product img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+}
+
+.pattern-product figcaption {
+  padding: 8px 9px;
+}
+
+.pattern-product strong,
+.pattern-product span {
+  display: block;
+}
+
+.pattern-product span {
+  color: var(--vp-c-text-2);
+  font-size: 12px;
+}
+
+.pattern-flow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pattern-flow li {
+  min-width: 0;
+}
+
+.pattern-flow button {
+  width: 100%;
+  height: 100%;
+  min-height: 70px;
+  border-top: 3px solid var(--vp-c-divider);
+  text-align: left;
+}
+
+.pattern-flow button.selected {
+  border-color: var(--vp-c-brand-1);
+  border-top-color: var(--vp-c-brand-1);
+  background: var(--vp-c-bg-soft);
+}
+
+.pattern-flow strong,
+.pattern-flow span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.pattern-flow span {
+  margin-top: 4px;
+  color: var(--vp-c-text-2);
+  font-size: 12px;
+}
+
+.pattern-inspector {
+  margin-top: 16px;
+  border-left: 3px solid var(--vp-c-brand-1);
+  background: var(--vp-c-bg-soft);
+  padding: 14px 16px;
+}
+
+.pattern-inspector header > span {
+  color: var(--vp-c-brand-1);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pattern-inspector h3 {
+  margin: 3px 0 5px;
+  border: 0;
+  padding: 0;
+  font-size: 18px;
+}
+
+.pattern-inspector header p {
+  margin: 0;
+  color: var(--vp-c-text-2);
+}
+
+.pattern-inspector dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin: 14px 0 0;
+  background: var(--vp-c-divider);
+}
+
+.pattern-inspector dl > div {
+  min-width: 0;
+  background: var(--vp-c-bg);
+  padding: 10px;
+}
+
+.pattern-inspector .verification-row {
+  grid-column: 1 / -1;
+}
+
+.pattern-inspector dt {
+  color: var(--vp-c-text-2);
+  font-size: 12px;
+}
+
+.pattern-inspector dd {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.pattern-inspector code {
+  white-space: normal;
+}
+
+.pattern-warning {
+  margin: 12px 0 0;
+  color: var(--vp-c-text-2);
+  font-size: 13px;
+}
+
 @media (max-width: 760px) {
   .controls-grid,
   .memory-controls,
@@ -1566,6 +1852,33 @@ input[type='checkbox'] {
   .memory-visuals,
   .race-stage {
     grid-template-columns: 1fr;
+  }
+
+  .pattern-scene {
+    grid-template-columns: 1fr;
+  }
+
+  .pattern-product {
+    display: grid;
+    grid-template-columns: 104px minmax(0, 1fr);
+  }
+
+  .pattern-product img {
+    height: 88px;
+    aspect-ratio: auto;
+  }
+
+  .pattern-flow,
+  .pattern-inspector dl {
+    grid-template-columns: 1fr;
+  }
+
+  .pattern-flow button {
+    min-height: 0;
+  }
+
+  .pattern-inspector .verification-row {
+    grid-column: auto;
   }
 }
 

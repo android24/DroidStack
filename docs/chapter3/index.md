@@ -48,8 +48,8 @@ Fragment 已经销毁，旧请求仍尝试更新 ImageView
 | [3.3 解码、尺寸与 Bitmap 内存](./chapter3_3.md) | 从压缩文件到像素内存 | 为什么小文件也会 OOM、目标尺寸如何决定采样和内存 |
 | [3.4 生命周期、列表复用与资源回收](./chapter3_4.md) | 从异步竞态到资源所有权 | 图片为什么错位、请求如何绑定 Target、资源何时能够复用 |
 | [3.5 设计模式与源码追踪](./chapter3_5.md) | 从模式名称到运行时协作 | 每个模式改变了哪一段流程、源码应该在哪里下断点 |
-| [3.6 框架比较、工程选型与综合实验](./chapter3_6.md) | 从理解到决策 | Coil、Glide、Picasso、Fresco 如何选择，怎样证明选择合理 |
-| [3.7 Image Pipeline Demo Lab](./chapter3_7.md) | 从阅读到操作 | 交互验证缓存、内存、列表竞态和失败链，再运行配套 Android Demo |
+| [3.6 框架比较、工程选型与综合作业设计](./chapter3_6.md) | 从理解到决策 | Coil、Glide、Picasso、Fresco 如何选择，怎样把机制组合成可验收作业 |
+| [3.7 Image Pipeline Demo Lab](./chapter3_7.md) | 从阅读到操作 | 交互验证缓存、内存、竞态、失败链和设计模式，再运行现有 Android Demo |
 
 ## 贯穿案例
 
@@ -93,7 +93,7 @@ data class Product(
 - 内存高或 OOM：[3.3 解码、尺寸与 Bitmap 内存](./chapter3_3.md)
 - RecyclerView 图片错位：[3.4 生命周期、列表复用与资源回收](./chapter3_4.md)
 - 想读 Coil / Glide 源码：[3.5 设计模式与源码追踪](./chapter3_5.md)
-- 需要做框架选型：[3.6 框架比较、工程选型与综合实验](./chapter3_6.md)
+- 需要做框架选型或综合作业：[3.6 框架比较、工程选型与综合作业设计](./chapter3_6.md)
 - 想直接动手验证：[3.7 Image Pipeline Demo Lab](./chapter3_7.md)
 - 想运行 Android 源码：[第三章 Demo 工程](https://github.com/android24/DroidStack/tree/main/demo/chapter03-image-pipeline)
 

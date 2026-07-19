@@ -1,3 +1,7 @@
+<script setup>
+import FrameworkEvolutionTimeline from '../.vitepress/theme/components/FrameworkEvolutionTimeline.vue'
+</script>
+
 # 第 3.0 节：从 Universal Image Loader 到 Coil
 
 Android 图片加载框架的演进，通常可以从早期广泛使用的 **Universal Image Loader（UIL）** 讲起。从 UIL 到 Picasso、Glide、Fresco，再到 Coil，变化的并不只是 API 从 Java 换成 Kotlin，也不是新框架简单淘汰旧框架。
@@ -14,6 +18,10 @@ Android 图片加载框架的演进，通常可以从早期广泛使用的 **Uni
 ```
 
 这一节不是框架编年表，而是第三章的“问题来源图”。后面学习的请求管线、缓存、解码、生命周期和设计模式，都是这段演进留下来的答案。
+
+先不要急着记年份。点击下面五个阶段，只观察三件事：当时新增了什么工程压力、框架把什么抽象成稳定对象、主流程因此怎样变化。
+
+<FrameworkEvolutionTimeline />
 
 ## 3.0.1 框架出现以前：每个项目都有一个自己的 ImageLoader
 
@@ -324,6 +332,18 @@ UIL < Picasso < Glide < Fresco < Coil
 4. Fresco 为什么称自己为 Pipeline，而不只是 Loader？
 5. Coil 的变化中，哪些来自图片领域，哪些来自 Kotlin、Compose 与多平台生态？
 6. 为什么“新框架一定全面优于旧框架”是错误的选型方法？
+
+<details>
+<summary>展开检查答案</summary>
+
+1. UIL 的贡献是把下载、调度、解码、缓存和回调收拢为统一基础设施，而不只是增加一个缓存容器；
+2. Picasso 把尺寸、变换、Target、取消和请求合并推进到一次 Request 的语义中；
+3. Glide 面对的是连续列表中的分配、GC、生命周期和大块像素复用问题，单纯扩大缓存并不能解决这些问题；
+4. Fresco 显式建模多级缓存、Producer、渐进显示和资源所有权，所以强调的是可治理 Pipeline；
+5. 缓存、解码、尺寸属于图片领域；协程取消、Compose State、可插拔网络和多平台边界来自 Kotlin 与 UI 生态；
+6. 框架设计重心不同，存量扩展、团队经验、迁移成本和业务约束都会改变最终选择。
+
+</details>
 
 ## 3.0.13 官方资料
 
