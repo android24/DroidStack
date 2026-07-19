@@ -240,9 +240,9 @@ fun ImageView.loadProductCover(product: Product) {
 | 首屏慢 | “网络慢” | fetch、decode、transform 哪一段慢，是否可预加载 |
 | 框架难迁移 | “封装不够” | 业务污染点、扩展点和测试替换边界 |
 
-## 3.6.10 本章总结
+## 3.6.10 原理与选型小结
 
-图片加载框架可以压缩成一条主线：
+进入最终实验前，先把图片加载框架压缩成一条主线：
 
 ```text
 Request 描述需求

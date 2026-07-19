@@ -289,4 +289,4 @@ whether result was delivered
 
 </details>
 
-[<- 上一节：3.3 解码、尺寸与 Bitmap 内存](./chapter3_3.md) | [进入 Demo：制造图片错位](./chapter3_7.md#_3-7-5-挑战三-亲手制造一次图片错位) | [继续：3.5 设计模式与源码追踪 ->](./chapter3_5.md)
+[<- 上一节：3.3 解码、尺寸与 Bitmap 内存](./chapter3_3.md) | [进入 Demo：制造图片错位](./chapter3_7.md?lab=race#_3-7-2-交互实验台) | [继续：3.5 设计模式与源码追踪 ->](./chapter3_5.md)

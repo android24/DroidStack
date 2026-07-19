@@ -1,6 +1,6 @@
 # 第 3.5 节：设计模式与源码追踪
 
-只把 `Builder、Strategy、Factory` 填进表格，仍然没有理解设计模式。真正的判断标准是：它把哪一类变化隔离了，运行时有哪些对象参与，去掉这个模式后哪部分代码会开始膨胀。阅读前可以先到 [设计模式观察器](./chapter3_7.md?lab=pattern#_3-7-2-交互实验台) 点击 Request、Fetch、Decode 和 Target，带着运行时对象返回正文。
+只把 `Builder、Strategy、Factory` 填进表格，仍然没有理解设计模式。真正的判断标准是：它把哪一类变化隔离了，运行时有哪些对象参与，去掉这个模式后哪部分代码会开始膨胀。阅读前可以先到 [设计模式观察器](./chapter3_7.md?lab=pattern#_3-7-2-交互实验台) 点击 Request、Scope、Chain、Fetch、Decode 和 Target，带着运行时对象返回正文。
 
 ## 3.5.1 把模式放回一次请求
 
