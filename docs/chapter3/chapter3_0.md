@@ -1,6 +1,6 @@
 # 第 3.0 节：从 Universal Image Loader 到 Coil
 
-你提到的“Image Loaded”，通常指早期非常流行的 **Universal Image Loader（UIL）**。从 UIL 到 Picasso、Glide、Fresco，再到 Coil，变化的并不只是 API 从 Java 换成 Kotlin，也不是新框架简单淘汰旧框架。
+Android 图片加载框架的演进，通常可以从早期广泛使用的 **Universal Image Loader（UIL）** 讲起。从 UIL 到 Picasso、Glide、Fresco，再到 Coil，变化的并不只是 API 从 Java 换成 Kotlin，也不是新框架简单淘汰旧框架。
 
 真正变化的是 Android 应用不断提出新的要求：
 
