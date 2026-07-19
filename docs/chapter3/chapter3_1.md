@@ -307,4 +307,4 @@ suspend fun execute(request: ImageRequest): ImageResult {
 
 </details>
 
-[返回第三章总览](./index.md) | [进入 Demo：观察失败链](./chapter3_7.md#_3-7-6-挑战四-判断错误应该在哪里结束) | [继续：3.2 缓存系统与缓存 Key ->](./chapter3_2.md)
+[<-- 上一节：3.0 从 Universal Image Loader 到 Coil](./chapter3_0.md) | [进入 Demo：观察失败链](./chapter3_7.md#_3-7-6-挑战四-判断错误应该在哪里结束) | [继续：3.2 缓存系统与缓存 Key ->](./chapter3_2.md)

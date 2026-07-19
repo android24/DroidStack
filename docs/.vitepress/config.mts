@@ -74,6 +74,7 @@ export default defineConfig({
             text: '第3章：图片加载框架',
             link: '/chapter3/',
             items: [
+              { text: '3.0 从 UIL 到 Coil', link: '/chapter3/chapter3_0' },
               { text: '3.1 请求管线与并发调度', link: '/chapter3/chapter3_1' },
               { text: '3.2 缓存系统与缓存 Key', link: '/chapter3/chapter3_2' },
               { text: '3.3 解码、尺寸与 Bitmap 内存', link: '/chapter3/chapter3_3' },
